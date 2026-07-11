@@ -1,0 +1,51 @@
+name: tarteel_rise
+description: "A premium Islamic alarm app that requires Quranic recitation to wake up."
+publish_to: 'none' # Prevents accidental publishing to pub.dev
+
+version: 1.0.0+1
+
+environment:
+  sdk: '^3.12.2' # Uses a highly stable, performance-optimized Dart SDK context
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # --- HARDWARE & DEVICE INTEGRATION ---
+  # Native background execution handles lock screens beautifully
+  alarm: ^5.5.0
+  # Taps directly into Apple's native iOS AlarmKit APIs
+  flutter_alarmkit: ^0.3.1
+  # Deep background control for playing looping local files like the Adhan
+  just_audio: ^0.9.44
+  
+  # --- COGNITIVE CORE: SPEECH PIPELINE ---
+  # Taps into local iOS Apple Speech infrastructure cleanly without network latency
+  speech_to_text: ^6.6.2
+
+  # --- LOCAL & OFFLINE DATA SYSTEM ---
+  # Lightning-fast local key-value store. Essential for reliable morning routines offline
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+
+  # --- STATE PIPELINE & ARCHITECTURE ---
+  # Structured state engine keeping the Ringing -> Recite states atomic
+  flutter_riverpod: ^2.5.2
+
+  # UI Design Enhancements
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  # Code generator utilities for compiling rapid database schemas
+  hive_generator: ^2.0.1
+  build_runner: ^2.4.11
+
+flutter:
+  uses-material-design: true
+
+  # Asset management for custom Adhan alarms
+  assets:
+    - assets/audio/adhan.mp3
