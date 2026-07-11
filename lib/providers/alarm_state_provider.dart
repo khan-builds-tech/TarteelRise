@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/active_alarm_session.dart';
@@ -71,7 +72,39 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
   AlarmStateNotifier({
     required this.speechService,
     required this.alarmHardwareService,
-  }) : super(const AlarmSessionState());
+  }) : super(const AlarmSessionState()) {
+    if (kDebugMode) {
+      _seedMockRecitingSessionForPreview();
+    }
+  }
+
+  // TEMPORARY — UI PREVIEW ONLY. Seeds a fake `reciting` session at
+  // startup so the active-alarm layout (pulsing mic, Arabic text, live
+  // match tracker) is visible without a real scheduled alarm or Quran
+  // verse database driving it. Gated on `kDebugMode` so the Dart compiler
+  // strips this out of release builds entirely. Remove once real alarm
+  // scheduling + Ayah lookup call `triggerAlarmSession` for real.
+  void _seedMockRecitingSessionForPreview() {
+    final AlarmModel mockAlarm = AlarmModel(
+      id: 'preview-mock-alarm',
+      hour: 5,
+      minute: 30,
+      daysOfWeek: const [],
+      isEnabled: true,
+      selectedSurahIndex: 0,
+      difficultyLevel: 'medium',
+    );
+
+    state = AlarmSessionState(
+      state: AlarmStateEnum.reciting,
+      session: ActiveAlarmSession(
+        activeAlarm: mockAlarm,
+        currentAyahArabic: 'إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ',
+        currentAyahTranslation: 'It is You we worship and You we ask for help.',
+        currentProgress: 0.0,
+      ),
+    );
+  }
 
   void triggerAlarmSession(
     AlarmModel alarm,
