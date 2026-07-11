@@ -1,4 +1,4 @@
-import com.android.build.api.dsl.CommonExtension
+import com.android.build.api.dsl.LibraryExtension
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
@@ -29,7 +29,7 @@ subprojects {
 subprojects {
     afterEvaluate {
         plugins.withId("com.android.library") {
-            extensions.getByType(CommonExtension::class.java).apply {
+            extensions.getByType(LibraryExtension::class.java).apply {
                 compileSdk = 36
 
                 compileOptions {
