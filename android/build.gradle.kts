@@ -18,16 +18,10 @@ rootProject.layout.buildDirectory.value(newBuildDir)
 subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
-}
-subprojects {
-    project.evaluationDependsOn(":app")
-}
 
-// Force all Flutter plugin subprojects to compile against the same SDK as the app.
-// The `alarm` plugin (5.5.0) still pins compileSdk 34, but its dependency `flutter_fgbg`
-// requires API 35+.
-subprojects {
-    afterEvaluate {
+    // Must register before evaluationDependsOn — otherwise subprojects are already
+    // evaluated and afterEvaluate throws.
+    val configureAndroidLibrarySdk: Project.() -> Unit = {
         plugins.withId("com.android.library") {
             extensions.getByType(LibraryExtension::class.java).apply {
                 compileSdk = 36
@@ -43,6 +37,14 @@ subprojects {
             compilerOptions.jvmTarget.set(JvmTarget.JVM_17)
         }
     }
+
+    if (state.executed) {
+        configureAndroidLibrarySdk()
+    } else {
+        afterEvaluate { configureAndroidLibrarySdk() }
+    }
+
+    project.evaluationDependsOn(":app")
 }
 
 tasks.register<Delete>("clean") {
