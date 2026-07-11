@@ -1,0 +1,37 @@
+# Codemagic CI/CD Pipeline Configuration for Tarteel Rise (Phase 2)
+workflows:
+  ios-build-validation:
+    name: Tarteel Rise Phase 2 iOS Validation
+    max_build_duration: 30
+    instance_type: mac_mini_m1
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: 'main'
+          include: true
+    scripts:
+      - name: Fetch Flutter Dependencies
+        script: | 
+          flutter pub get
+      - name: Mock Asset Verification
+        script: |
+          # Ensures the build doesn't break if adhan.mp3 hasn't been committed yet
+          mkdir -p assets/audio
+          if [ ! -f assets/audio/adhan.mp3 ]; then
+            echo "Mock Audio Track Data for CI Pipeline" > assets/audio/adhan.mp3
+          fi
+      - name: Build iOS IPA Package
+        script: | 
+          # Compiles the workspace architecture up to the hardware integration layer
+          flutter build ipa --release --no-codesign
+    artifacts:
+      - build/ios/ipa/*.ipa
+    publishing:
+      email:
+        recipients:
+          - your-email@example.com # Replace with your developer email address

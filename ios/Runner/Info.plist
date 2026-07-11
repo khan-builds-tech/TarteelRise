@@ -26,6 +26,19 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>fetch</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.gdelataillade.fetch</string>
+	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Tarteel Rise needs microphone access to listen to your Quranic recitation and confirm it aloud before your wake-up alarm can be dismissed.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Tarteel Rise uses on-device speech recognition to validate your Quranic recitation against the displayed Ayah before silencing your alarm.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
