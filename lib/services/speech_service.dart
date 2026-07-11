@@ -57,11 +57,11 @@ class SpeechService {
       final String localeId = await _resolveArabicLocaleId();
 
       await _speech.listen(
-        localeId: localeId,
         onResult: (SpeechRecognitionResult result) {
           onRecognized(result.recognizedWords);
         },
         listenOptions: SpeechListenOptions(
+          localeId: localeId,
           partialResults: true,
           cancelOnError: true,
           onDevice: true,
