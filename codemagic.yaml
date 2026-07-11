@@ -1,4 +1,4 @@
-# Codemagic CI/CD Pipeline Configuration for Tarteel Rise (Ad-Hoc Local Testing)
+# Codemagic CI/CD Pipeline Configuration for Tarteel Rise (Ad-Hoc Testing on Develop)
 workflows:
   ios-direct-install:
     name: Tarteel Rise Direct iPhone Installer
@@ -12,7 +12,7 @@ workflows:
       events:
         - push
       branch_patterns:
-        - pattern: 'main'
+        - pattern: 'develop' # Track the develop branch explicitly
           include: true
     scripts:
       - name: Fetch Dependencies
@@ -26,11 +26,10 @@ workflows:
           fi
       - name: Build Ad-Hoc Application Bundle
         script: | 
-          # Compiles a direct local execution package
           flutter build ipa --release --no-codesign
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
       email:
         recipients:
-          - your-email@example.com # Replace with your email address
+          - your-email@example.com
