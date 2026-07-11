@@ -17,7 +17,7 @@ dependencies:
   # Taps directly into Apple's native iOS AlarmKit APIs
   flutter_alarmkit: ^0.3.1
   # Deep background control for playing looping local files like the Adhan
-  just_audio: ^0.9.44
+  just_audio: ^0.10.6
   
   # --- COGNITIVE CORE: SPEECH PIPELINE ---
   # Taps into local iOS Apple Speech infrastructure cleanly without network latency
