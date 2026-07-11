@@ -1,35 +1,34 @@
-# Codemagic CI/CD Pipeline Configuration for Tarteel Rise (Ad-Hoc Testing on Develop)
+# Codemagic CI/CD Pipeline Configuration for Tarteel Rise (Android Sandbox Workflow)
 workflows:
-  ios-direct-install:
-    name: Tarteel Rise Direct iPhone Installer
-    max_build_duration: 30
+  android-build:
+    name: Tarteel Rise Android Sandbox Installer
+    max_build_duration: 20
     instance_type: mac_mini_m1
     environment:
       flutter: stable
-      xcode: latest
-      cocoapods: default
     triggering:
       events:
         - push
       branch_patterns:
-        - pattern: 'develop' # Track the develop branch explicitly
+        - pattern: 'develop'
           include: true
     scripts:
-      - name: Fetch Dependencies
+      - name: Fetch Core Dependencies
         script: | 
           flutter pub get
-      - name: Verify Audio Asset
+      - name: Verify Audio Asset Workspace
         script: |
           mkdir -p assets/audio
           if [ ! -f assets/audio/adhan.mp3 ]; then
-            echo "Mock Audio Track" > assets/audio/adhan.mp3
+            echo "Mock Audio Track Data" > assets/audio/adhan.mp3
           fi
-      - name: Build Ad-Hoc Application Bundle
+      - name: Build Debug Android Application Package
         script: | 
-          flutter build ipa --release --no-codesign
+          # Generates a universal APK package ready for direct installation on any device
+          flutter build apk --debug
     artifacts:
-      - build/ios/ipa/*.ipa
+      - build/app/outputs/flutter-apk/*.apk
     publishing:
       email:
         recipients:
-          - your-email@example.com
+          - aman2810@example.com # Replace with your email address
