@@ -1,4 +1,5 @@
-import com.android.build.gradle.BaseExtension
+import com.android.build.api.dsl.CommonExtension
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 allprojects {
@@ -27,17 +28,19 @@ subprojects {
 // requires API 35+.
 subprojects {
     afterEvaluate {
-        extensions.findByType(BaseExtension::class.java)?.apply {
-            compileSdkVersion(36)
+        plugins.withId("com.android.library") {
+            extensions.getByType(CommonExtension::class.java).apply {
+                compileSdk = 36
 
-            compileOptions {
-                sourceCompatibility = JavaVersion.VERSION_17
-                targetCompatibility = JavaVersion.VERSION_17
+                compileOptions {
+                    sourceCompatibility = JavaVersion.VERSION_17
+                    targetCompatibility = JavaVersion.VERSION_17
+                }
             }
         }
 
         tasks.withType(KotlinCompile::class.java).configureEach {
-            kotlinOptions.jvmTarget = JavaVersion.VERSION_17.toString()
+            compilerOptions.jvmTarget.set(JvmTarget.JVM_17)
         }
     }
 }
