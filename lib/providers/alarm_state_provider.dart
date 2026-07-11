@@ -4,6 +4,7 @@ import '../models/active_alarm_session.dart';
 import '../models/alarm_model.dart';
 import '../models/alarm_state_enum.dart';
 import '../services/alarm_hardware_service.dart';
+import '../services/database_service.dart';
 import '../services/speech_service.dart';
 import '../utils/arabic_utils.dart';
 
@@ -15,6 +16,12 @@ final Provider<SpeechService> speechServiceProvider =
 
 final Provider<AlarmHardwareService> alarmHardwareServiceProvider =
     Provider<AlarmHardwareService>((ref) => AlarmHardwareService());
+
+/// `main()` reads this via a [ProviderContainer] to open the Hive boxes
+/// before `runApp()`, and it stays the same instance for the rest of the
+/// app's lifetime (e.g. the ringing -> state-machine bridge).
+final Provider<DatabaseService> databaseServiceProvider =
+    Provider<DatabaseService>((ref) => DatabaseService());
 
 /// Match-percentage threshold required to clear each configured difficulty.
 /// Mirrors the Difficulty Matrix in the product spec; unrecognized levels

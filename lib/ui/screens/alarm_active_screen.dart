@@ -176,9 +176,52 @@ class _RecitingLayout extends StatelessWidget {
       children: [
         const Spacer(),
         _ArabicAyahCard(arabicText: currentSession.currentAyahArabic),
+        const SizedBox(height: 32),
+        _MatchProgressTracker(progress: currentSession.currentProgress),
         const Spacer(),
         const SizedBox(height: 140),
       ],
+    );
+  }
+}
+
+/// Live speech-matching accuracy readout, updated on every recognized
+/// speech chunk. Animates smoothly between values rather than jumping,
+/// since [TweenAnimationBuilder] always animates from whatever value is
+/// currently on screen to the new `end`, regardless of the `begin` given.
+class _MatchProgressTracker extends StatelessWidget {
+  final double progress;
+
+  const _MatchProgressTracker({required this.progress});
+
+  @override
+  Widget build(BuildContext context) {
+    final double clampedProgress = progress.clamp(0.0, 100.0);
+
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: clampedProgress),
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeOut,
+      builder: (context, animatedValue, child) {
+        return Column(
+          children: [
+            Text(
+              '${animatedValue.round()}%',
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                value: animatedValue / 100,
+                minHeight: 12,
+                backgroundColor: AppColors.surfaceElevated,
+                color: AppColors.accentEmerald,
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

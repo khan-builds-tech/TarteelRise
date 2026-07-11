@@ -6,8 +6,8 @@ import 'package:flutter/material.dart';
 class AppColors {
   const AppColors._();
 
-  static const Color primaryBackground = Color(0xFF121212);
-  static const Color accentEmerald = Color(0xFF0F9D58);
+  static const Color primaryBackground = Color(0xFF1A2332);
+  static const Color accentEmerald = Color(0xFF10B981);
   static const Color surfaceElevated = Color(0xFF1E1E1E);
   static const Color textPrimary = Color(0xFFF5F5F5);
 }
