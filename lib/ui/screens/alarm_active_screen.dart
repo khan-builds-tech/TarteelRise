@@ -53,18 +53,27 @@ class _AlarmActiveScreenState extends ConsumerState<AlarmActiveScreen>
 
     return Scaffold(
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
-      floatingActionButton: _buildFab(state),
+      floatingActionButton: _buildFab(state, sessionState),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
           child: switch (state) {
             AlarmStateEnum.idle => const _IdlePlaceholder(),
             AlarmStateEnum.ringing => _RingingLayout(pulseController: _pulseController),
-            AlarmStateEnum.paused => _PausedLayout(session: sessionState.session),
-            AlarmStateEnum.reciting =>
-              _RecitingLayout(session: sessionState.session),
-            AlarmStateEnum.recitingTranslation =>
-              _RecitingTranslationLayout(session: sessionState.session),
+            AlarmStateEnum.paused => _PausedLayout(
+                session: sessionState.session,
+                speechErrorMessage: sessionState.speechErrorMessage,
+              ),
+            AlarmStateEnum.reciting => _RecitingLayout(
+                session: sessionState.session,
+                isMicActive: sessionState.isMicActive,
+                speechErrorMessage: sessionState.speechErrorMessage,
+              ),
+            AlarmStateEnum.recitingTranslation => _RecitingTranslationLayout(
+                session: sessionState.session,
+                isMicActive: sessionState.isMicActive,
+                speechErrorMessage: sessionState.speechErrorMessage,
+              ),
             AlarmStateEnum.completed =>
               _CompletedLayout(session: sessionState.session),
           },
@@ -73,7 +82,7 @@ class _AlarmActiveScreenState extends ConsumerState<AlarmActiveScreen>
     );
   }
 
-  Widget? _buildFab(AlarmStateEnum state) {
+  Widget? _buildFab(AlarmStateEnum state, AlarmSessionState sessionState) {
     switch (state) {
       case AlarmStateEnum.ringing:
         return FloatingActionButton.extended(
@@ -104,8 +113,12 @@ class _AlarmActiveScreenState extends ConsumerState<AlarmActiveScreen>
             return Transform.scale(scale: scale, child: child);
           },
           child: FloatingActionButton.large(
-            onPressed: () {},
-            child: const Icon(Icons.mic, size: 40),
+            onPressed: () => ref.read(alarmStateProvider.notifier).retryVoiceCapture(),
+            tooltip: sessionState.isMicActive ? 'Listening…' : 'Tap to open the microphone',
+            child: Icon(
+              sessionState.isMicActive ? Icons.mic : Icons.mic_none,
+              size: 40,
+            ),
           ),
         );
       case AlarmStateEnum.idle:
@@ -165,8 +178,9 @@ class _RingingLayout extends StatelessWidget {
 /// tapping "Start Reciting" to open the microphone.
 class _PausedLayout extends ConsumerWidget {
   final ActiveAlarmSession? session;
+  final String? speechErrorMessage;
 
-  const _PausedLayout({required this.session});
+  const _PausedLayout({required this.session, this.speechErrorMessage});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -183,6 +197,10 @@ class _PausedLayout extends ConsumerWidget {
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.bodyLarge,
         ),
+        if (speechErrorMessage != null) ...[
+          const SizedBox(height: 12),
+          _SpeechErrorBanner(message: speechErrorMessage!),
+        ],
         const Spacer(),
         _ArabicAyahCard(arabicText: currentSession.currentAyahArabic),
         const Spacer(),
@@ -214,10 +232,99 @@ class _FlashDot extends StatelessWidget {
   }
 }
 
+class _SpeechErrorBanner extends StatelessWidget {
+  final String message;
+
+  const _SpeechErrorBanner({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: Colors.redAccent, width: 1.5),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            const Icon(Icons.mic_off, color: Colors.redAccent),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MicStatusBanner extends StatelessWidget {
+  final bool isMicActive;
+  final String? speechErrorMessage;
+
+  const _MicStatusBanner({
+    required this.isMicActive,
+    this.speechErrorMessage,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (speechErrorMessage != null) {
+      return _SpeechErrorBanner(message: speechErrorMessage!);
+    }
+
+    return Card(
+      color: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: isMicActive ? AppColors.accentEmerald : Colors.orangeAccent,
+          width: 1.5,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Icon(
+              isMicActive ? Icons.mic : Icons.mic_none,
+              color: isMicActive ? AppColors.accentEmerald : Colors.orangeAccent,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                isMicActive
+                    ? 'Listening — recite the text aloud.'
+                    : 'Microphone is off. Tap the mic button below to start listening.',
+                style: TextStyle(
+                  color: isMicActive ? AppColors.accentEmerald : Colors.orangeAccent,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _RecitingLayout extends StatelessWidget {
   final ActiveAlarmSession? session;
+  final bool isMicActive;
+  final String? speechErrorMessage;
 
-  const _RecitingLayout({required this.session});
+  const _RecitingLayout({
+    required this.session,
+    required this.isMicActive,
+    this.speechErrorMessage,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -228,6 +335,7 @@ class _RecitingLayout extends StatelessWidget {
 
     return Column(
       children: [
+        _MicStatusBanner(isMicActive: isMicActive, speechErrorMessage: speechErrorMessage),
         const Spacer(),
         _ArabicAyahCard(
           arabicText: currentSession.currentAyahArabic,
@@ -248,8 +356,14 @@ class _RecitingLayout extends StatelessWidget {
 /// and highlighted the same way the Ayah was.
 class _RecitingTranslationLayout extends StatelessWidget {
   final ActiveAlarmSession? session;
+  final bool isMicActive;
+  final String? speechErrorMessage;
 
-  const _RecitingTranslationLayout({required this.session});
+  const _RecitingTranslationLayout({
+    required this.session,
+    required this.isMicActive,
+    this.speechErrorMessage,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -260,6 +374,7 @@ class _RecitingTranslationLayout extends StatelessWidget {
 
     return Column(
       children: [
+        _MicStatusBanner(isMicActive: isMicActive, speechErrorMessage: speechErrorMessage),
         const Spacer(),
         _TranslationCard(
           translation: currentSession.currentAyahTranslation,

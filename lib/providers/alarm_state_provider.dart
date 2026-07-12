@@ -51,18 +51,32 @@ class AlarmSessionState {
   final AlarmStateEnum state;
   final ActiveAlarmSession? session;
 
+  /// Shown on the wake-up screen when mic permission or speech init fails.
+  final String? speechErrorMessage;
+
+  /// True once the on-device speech engine is actively listening.
+  final bool isMicActive;
+
   const AlarmSessionState({
     this.state = AlarmStateEnum.idle,
     this.session,
+    this.speechErrorMessage,
+    this.isMicActive = false,
   });
 
   AlarmSessionState copyWith({
     AlarmStateEnum? state,
     ActiveAlarmSession? session,
+    String? speechErrorMessage,
+    bool? isMicActive,
+    bool clearSpeechError = false,
   }) {
     return AlarmSessionState(
       state: state ?? this.state,
       session: session ?? this.session,
+      speechErrorMessage:
+          clearSpeechError ? null : (speechErrorMessage ?? this.speechErrorMessage),
+      isMicActive: isMicActive ?? this.isMicActive,
     );
   }
 }
@@ -90,17 +104,11 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     this.resumeGracePeriod = const Duration(minutes: 4),
   }) : super(const AlarmSessionState());
 
-  // TEMPORARY — DEBUG ONLY. Seeds a fake `reciting` session so the
-  // active-alarm layout (pulsing mic, Arabic text, live match tracker) is
-  // visible without a real scheduled alarm. Invoked explicitly from the
-  // Dashboard debug button — not at startup — so debug builds can still
-  // exercise the real `idle -> ringing` path when a native alarm fires.
+  // TEMPORARY — DEBUG ONLY. Seeds a fake `paused` session so the two-step
+  // wake-up layout can be exercised without a real scheduled alarm.
   void seedPreviewSessionForDebug() {
     if (!kDebugMode) return;
-    _seedMockRecitingSessionForPreview();
-  }
 
-  void _seedMockRecitingSessionForPreview() {
     final AlarmModel mockAlarm = AlarmModel(
       id: 'preview-mock-alarm',
       hour: 5,
@@ -112,15 +120,20 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     );
 
     state = AlarmSessionState(
-      state: AlarmStateEnum.reciting,
+      state: AlarmStateEnum.paused,
       session: ActiveAlarmSession(
         activeAlarm: mockAlarm,
         currentAyahArabic: 'إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ',
         currentAyahTranslation: 'It is You we worship and You we ask for help.',
-        currentProgress: 0.0,
       ),
     );
   }
+
+  static const String _micPermissionError =
+      'Microphone access is required. Allow it in Settings, then tap Start Reciting again.';
+
+  static const String _micStartError =
+      'Could not open the microphone. Tap the mic button to try again, or use Emergency Snooze.';
 
   void triggerAlarmSession(
     AlarmModel alarm,
@@ -159,19 +172,73 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
   Future<void> startVoiceCapture() async {
     if (state.state != AlarmStateEnum.paused) return;
 
-    if (!speechService.isInitialized) {
-      final bool speechReady = await speechService.initializeSpeech();
-      if (!speechReady) {
-        return;
-      }
+    if (!await _ensureSpeechReady()) {
+      state = state.copyWith(speechErrorMessage: _micPermissionError);
+      return;
     }
 
-    state = state.copyWith(state: AlarmStateEnum.reciting);
+    state = state.copyWith(
+      state: AlarmStateEnum.reciting,
+      clearSpeechError: true,
+      isMicActive: false,
+    );
     _scheduleResumeIfIncomplete();
-    await speechService.startListening(
+
+    final bool listening = await speechService.startListening(
       localePreferenceOrder: arabicLocalePreferenceOrder,
       onRecognized: processSpeechInput,
     );
+
+    if (!listening) {
+      _cancelResumeTimer();
+      state = state.copyWith(
+        state: AlarmStateEnum.paused,
+        speechErrorMessage: _micStartError,
+        isMicActive: false,
+      );
+      return;
+    }
+
+    state = state.copyWith(isMicActive: true);
+  }
+
+  /// Re-opens the microphone if recognition stalled, or the user tapped the
+  /// pulsing mic while already in a recitation phase.
+  Future<void> retryVoiceCapture() async {
+    if (state.state != AlarmStateEnum.reciting &&
+        state.state != AlarmStateEnum.recitingTranslation) {
+      return;
+    }
+
+    if (!await _ensureSpeechReady()) {
+      state = state.copyWith(speechErrorMessage: _micPermissionError);
+      return;
+    }
+
+    state = state.copyWith(clearSpeechError: true, isMicActive: false);
+
+    final bool listening = state.state == AlarmStateEnum.recitingTranslation
+        ? await speechService.startListening(
+            localePreferenceOrder: englishLocalePreferenceOrder,
+            onRecognized: processTranslationSpeechInput,
+          )
+        : await speechService.startListening(
+            localePreferenceOrder: arabicLocalePreferenceOrder,
+            onRecognized: processSpeechInput,
+          );
+
+    state = state.copyWith(
+      isMicActive: listening,
+      clearSpeechError: listening,
+      speechErrorMessage: listening ? null : _micStartError,
+    );
+  }
+
+  Future<bool> _ensureSpeechReady() async {
+    if (speechService.isInitialized) {
+      return true;
+    }
+    return speechService.initializeSpeech();
   }
 
   /// Returns to [AlarmStateEnum.ringing] and resumes the Adhan loop if the
@@ -208,13 +275,18 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     );
 
     if (matchPercentage < threshold) {
-      state = AlarmSessionState(state: AlarmStateEnum.reciting, session: updatedSession);
+      state = AlarmSessionState(
+        state: AlarmStateEnum.reciting,
+        session: updatedSession,
+        isMicActive: true,
+      );
       return;
     }
 
     state = AlarmSessionState(
       state: AlarmStateEnum.recitingTranslation,
       session: updatedSession,
+      isMicActive: false,
     );
 
     // Switch the mic to English for the translation gate. Stopped first
@@ -222,9 +294,14 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     // fresh locale mid-stream on top of an active session isn't a
     // documented, reliable pattern for the underlying engine.
     await speechService.stopListening();
-    await speechService.startListening(
+    final bool listening = await speechService.startListening(
       localePreferenceOrder: englishLocalePreferenceOrder,
       onRecognized: processTranslationSpeechInput,
+    );
+    state = state.copyWith(
+      isMicActive: listening,
+      clearSpeechError: listening,
+      speechErrorMessage: listening ? null : _micStartError,
     );
   }
 
@@ -256,6 +333,7 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     state = AlarmSessionState(
       state: cleared ? AlarmStateEnum.completed : AlarmStateEnum.recitingTranslation,
       session: updatedSession,
+      isMicActive: !cleared,
     );
 
     if (cleared) {
@@ -369,6 +447,7 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
 
   void resetToIdle() {
     _cancelResumeTimer();
+    speechService.stopListening();
     state = const AlarmSessionState();
   }
 

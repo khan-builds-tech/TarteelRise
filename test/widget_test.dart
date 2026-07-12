@@ -48,7 +48,7 @@ void main() {
   });
 
   testWidgets(
-    'Test Active Alarm UI button reaches the debug preview reciting session',
+    'Test Active Alarm UI button reaches the debug preview paused session',
     (WidgetTester tester) async {
       await tester.pumpWidget(
         UncontrolledProviderScope(container: container, child: const TarteelRiseApp()),
@@ -60,7 +60,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
 
       expect(find.textContaining('إِيَّاكَ نَعْبُدُ'), findsOneWidget);
-      expect(find.text('0%'), findsOneWidget);
+      expect(find.text('Start Reciting'), findsOneWidget);
     },
   );
 

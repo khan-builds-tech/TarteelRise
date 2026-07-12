@@ -23,6 +23,9 @@ class SpeechService {
   /// permitted speech recognizer.
   bool get isInitialized => _isInitialized;
 
+  /// Whether the native engine is actively capturing audio right now.
+  bool get isListening => _speech.isListening;
+
   /// Sets up the native speech engine. This also triggers the native
   /// microphone + speech-recognition permission prompts (handled internally
   /// by `speech_to_text`), so this must complete before any `listen` call.
@@ -53,30 +56,52 @@ class SpeechService {
   /// whichever locale from [localePreferenceOrder] the device actually
   /// supports (most specific first — e.g. [arabicLocalePreferenceOrder] for
   /// the Ayah, [englishLocalePreferenceOrder] for its translation).
-  /// No-op if [initializeSpeech] hasn't succeeded yet.
-  Future<void> startListening({
+  /// Returns `false` if [initializeSpeech] hasn't succeeded yet or the
+  /// native engine refuses to open the microphone.
+  Future<bool> startListening({
     required List<String> localePreferenceOrder,
     required void Function(String recognizedText) onRecognized,
   }) async {
-    if (!_isInitialized) return;
+    if (!_isInitialized) return false;
 
     try {
+      if (_speech.isListening) {
+        await _speech.stop();
+      }
+
       final String localeId = await _resolveLocaleId(localePreferenceOrder);
 
-      await _speech.listen(
-        onResult: (SpeechRecognitionResult result) {
-          onRecognized(result.recognizedWords);
-        },
-        listenOptions: SpeechListenOptions(
-          localeId: localeId,
-          partialResults: true,
-          cancelOnError: true,
-          onDevice: true,
-          listenMode: ListenMode.dictation,
-        ),
+      for (final ListenMode mode in <ListenMode>[
+        ListenMode.dictation,
+        ListenMode.search,
+      ]) {
+        await _speech.listen(
+          onResult: (SpeechRecognitionResult result) {
+            onRecognized(result.recognizedWords);
+          },
+          listenOptions: SpeechListenOptions(
+            localeId: localeId,
+            partialResults: true,
+            cancelOnError: false,
+            onDevice: true,
+            listenMode: mode,
+          ),
+        );
+
+        if (_speech.isListening) {
+          debugPrint('SpeechService listening ($localeId, $mode)');
+          return true;
+        }
+      }
+
+      debugPrint(
+        'SpeechService.startListening: engine never entered listening state '
+        'for locale $localeId',
       );
+      return false;
     } catch (error, stackTrace) {
       debugPrint('SpeechService.startListening failed: $error\n$stackTrace');
+      return false;
     }
   }
 

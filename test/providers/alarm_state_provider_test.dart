@@ -41,10 +41,10 @@ class _FakeSpeechService extends SpeechService {
   Future<bool> initializeSpeech() async => true;
 
   @override
-  Future<void> startListening({
+  Future<bool> startListening({
     required List<String> localePreferenceOrder,
     required void Function(String recognizedText) onRecognized,
-  }) async {}
+  }) async => true;
 
   @override
   Future<void> stopListening() async {}
