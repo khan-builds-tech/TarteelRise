@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:alarm/alarm.dart';
 import 'package:flutter/foundation.dart';
+import 'package:just_audio/just_audio.dart';
 
 import '../models/alarm_model.dart';
 
@@ -8,6 +11,20 @@ import '../models/alarm_model.dart';
 /// app talks to platform alarm APIs directly.
 class AlarmHardwareService {
   static const String adhanAssetPath = 'assets/audio/adhan.mp3';
+
+  /// Plays the Adhan locally when [resumeAdhanPlayback] fires — deliberately
+  /// NOT the native `alarm` package, which was already stopped via
+  /// [stopActiveAlarmSound] once the user started reciting. Re-triggering a
+  /// *new* native alarm just to ring "right now" would be a hack (that API
+  /// is for scheduling future times) and would loop back through
+  /// `AlarmRingingListener` into a session that's already active.
+  /// Lazy — `AudioPlayer()` initializes a native audio session, which
+  /// needs a Flutter binding to already exist. Most alarm sessions
+  /// complete before ever needing this, so it's only constructed the
+  /// first time [resumeAdhanPlayback]/[stopResumedAdhanPlayback] actually
+  /// runs, rather than eagerly whenever [AlarmHardwareService] itself is.
+  AudioPlayer? _resumePlayer;
+  AudioPlayer get _resumePlayerInstance => _resumePlayer ??= AudioPlayer();
 
   /// A stuck platform channel (missing plugin registration, an unresponsive
   /// native side) doesn't throw — it just never completes the `Future`,
@@ -96,8 +113,17 @@ class AlarmHardwareService {
       stopActiveAlarmSound(alarmId);
 
   /// Immediately stops the ringing Adhan audio for the alarm with
-  /// [alarmId] (a native id produced by [nativeAlarmIdFor]).
+  /// [alarmId] (a native id produced by [nativeAlarmIdFor]) — and, best
+  /// effort, any locally resumed Adhan from [resumeAdhanPlayback] too, so
+  /// silencing the alarm always silences whichever audio source is
+  /// actually active.
   Future<bool> stopActiveAlarmSound(int alarmId) async {
+    // Only touch the resume player if it was already constructed — most
+    // sessions complete without ever calling [resumeAdhanPlayback], and
+    // touching [_resumePlayerInstance] here would defeat its laziness.
+    if (_resumePlayer != null) {
+      unawaited(stopResumedAdhanPlayback());
+    }
     try {
       return await Alarm.stop(alarmId).timeout(nativeCallTimeout);
     } catch (error, stackTrace) {
@@ -105,6 +131,34 @@ class AlarmHardwareService {
         'AlarmHardwareService.stopActiveAlarmSound failed: $error\n$stackTrace',
       );
       return false;
+    }
+  }
+
+  /// Resumes the Adhan locally (looping, via just_audio) when a recitation
+  /// session times out without completing. See [_resumePlayer] for why
+  /// this doesn't go through the native `alarm` package.
+  Future<void> resumeAdhanPlayback() async {
+    try {
+      await _resumePlayerInstance.setAsset(adhanAssetPath);
+      await _resumePlayerInstance.setLoopMode(LoopMode.one);
+      await _resumePlayerInstance.setVolume(1.0);
+      await _resumePlayerInstance.play();
+    } catch (error, stackTrace) {
+      debugPrint(
+        'AlarmHardwareService.resumeAdhanPlayback failed: $error\n$stackTrace',
+      );
+    }
+  }
+
+  /// Stops audio started by [resumeAdhanPlayback]. Safe to call even if it
+  /// was never started.
+  Future<void> stopResumedAdhanPlayback() async {
+    try {
+      await _resumePlayerInstance.stop();
+    } catch (error, stackTrace) {
+      debugPrint(
+        'AlarmHardwareService.stopResumedAdhanPlayback failed: $error\n$stackTrace',
+      );
     }
   }
 

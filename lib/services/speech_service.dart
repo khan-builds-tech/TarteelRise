@@ -5,7 +5,10 @@ import 'package:speech_to_text/speech_to_text.dart';
 
 /// Arabic locale codes to try, most specific dialect first, falling back to
 /// the generic `ar` code if the device doesn't report a specific one.
-const List<String> _arabicLocalePreferenceOrder = <String>['ar-SA', 'ar-EG', 'ar'];
+const List<String> arabicLocalePreferenceOrder = <String>['ar-SA', 'ar-EG', 'ar'];
+
+/// English locale codes to try, for the translation-recitation phase.
+const List<String> englishLocalePreferenceOrder = <String>['en-US', 'en-GB', 'en'];
 
 /// Wraps the on-device `speech_to_text` engine (Apple `SFSpeechRecognizer` /
 /// Google Speech Services) behind a minimal start/stop surface for
@@ -45,16 +48,20 @@ class SpeechService {
     }
   }
 
-  /// Activates the microphone and streams recognized Arabic text to
-  /// [onRecognized] in real time, as both partial and final results arrive.
+  /// Activates the microphone and streams recognized text to [onRecognized]
+  /// in real time, as both partial and final results arrive, recognizing in
+  /// whichever locale from [localePreferenceOrder] the device actually
+  /// supports (most specific first — e.g. [arabicLocalePreferenceOrder] for
+  /// the Ayah, [englishLocalePreferenceOrder] for its translation).
   /// No-op if [initializeSpeech] hasn't succeeded yet.
-  Future<void> startListeningToRecitation(
-    void Function(String recognizedText) onRecognized,
-  ) async {
+  Future<void> startListening({
+    required List<String> localePreferenceOrder,
+    required void Function(String recognizedText) onRecognized,
+  }) async {
     if (!_isInitialized) return;
 
     try {
-      final String localeId = await _resolveArabicLocaleId();
+      final String localeId = await _resolveLocaleId(localePreferenceOrder);
 
       await _speech.listen(
         onResult: (SpeechRecognitionResult result) {
@@ -69,9 +76,7 @@ class SpeechService {
         ),
       );
     } catch (error, stackTrace) {
-      debugPrint(
-        'SpeechService.startListeningToRecitation failed: $error\n$stackTrace',
-      );
+      debugPrint('SpeechService.startListening failed: $error\n$stackTrace');
     }
   }
 
@@ -85,25 +90,23 @@ class SpeechService {
     }
   }
 
-  /// Picks the most specific Arabic locale the device actually supports,
-  /// falling back to the generic `ar` code if none of the preferred
-  /// dialect-specific codes are reported.
-  Future<String> _resolveArabicLocaleId() async {
+  /// Picks the most specific locale the device actually supports from
+  /// [preferenceOrder], falling back to the last (most generic) entry if
+  /// none of the preferred codes are reported.
+  Future<String> _resolveLocaleId(List<String> preferenceOrder) async {
     try {
       final List<LocaleName> availableLocales = await _speech.locales();
       final Set<String> availableIds =
           availableLocales.map((LocaleName locale) => locale.localeId).toSet();
 
-      for (final String candidate in _arabicLocalePreferenceOrder) {
+      for (final String candidate in preferenceOrder) {
         if (availableIds.contains(candidate)) {
           return candidate;
         }
       }
     } catch (error, stackTrace) {
-      debugPrint(
-        'SpeechService._resolveArabicLocaleId failed: $error\n$stackTrace',
-      );
+      debugPrint('SpeechService._resolveLocaleId failed: $error\n$stackTrace');
     }
-    return _arabicLocalePreferenceOrder.last;
+    return preferenceOrder.last;
   }
 }

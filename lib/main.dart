@@ -2,13 +2,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'models/alarm_model.dart';
+import 'models/alarm_state_enum.dart';
 import 'providers/alarm_state_provider.dart';
 import 'services/alarm_hardware_service.dart';
 import 'services/alarm_ringing_listener.dart';
 import 'services/database_service.dart';
 import 'services/quran_repository.dart';
 import 'theme/app_theme.dart';
+import 'ui/screens/alarm_active_screen.dart';
 import 'ui/screens/alarm_dashboard_screen.dart';
+
+/// App-wide navigator access so a real alarm ringing (which can happen
+/// while any screen is on top, or while the app is merely backgrounded)
+/// can push [AlarmActiveScreen] itself, rather than relying on the state
+/// machine's `ringing` transition to somehow be visible on its own.
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+/// True while [AlarmActiveScreen] is the pushed, on-screen route — guards
+/// against pushing a second copy if `ringing` fires again (or the ringing
+/// stream re-emits) while it's already showing.
+bool _isActiveAlarmScreenShowing = false;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,6 +45,25 @@ Future<void> main() async {
     resolveAyahContent: _resolveAyahContent,
   );
   ringingListener.start();
+
+  // The one and only place that reacts to the state machine entering
+  // `ringing` by actually SHOWING the wake-up screen. Without this, a real
+  // alarm firing only ever changes background Riverpod state — the Adhan
+  // plays natively regardless, but there is no way to reach the mic
+  // button or stop it.
+  container.listen<AlarmSessionState>(
+    alarmStateProvider,
+    (previous, next) {
+      final bool enteringRinging = next.state == AlarmStateEnum.ringing &&
+          previous?.state != AlarmStateEnum.ringing;
+      if (enteringRinging && !_isActiveAlarmScreenShowing) {
+        _isActiveAlarmScreenShowing = true;
+        navigatorKey.currentState
+            ?.push(MaterialPageRoute<void>(builder: (_) => const AlarmActiveScreen()))
+            .then((_) => _isActiveAlarmScreenShowing = false);
+      }
+    },
+  );
 
   runApp(
     UncontrolledProviderScope(
@@ -63,6 +95,7 @@ class TarteelRiseApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'Tarteel Rise',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,

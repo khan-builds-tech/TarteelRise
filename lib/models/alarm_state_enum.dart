@@ -10,7 +10,11 @@ enum AlarmStateEnum {
   /// and validated against the current Ayah via arabic_utils.
   reciting,
 
-  /// The match percentage cleared the configured threshold; audio has
-  /// stopped, the translation is revealed, and the streak has been updated.
+  /// The Arabic Ayah cleared its threshold; the translation is now shown
+  /// and must be recited aloud too, validated via translation_match_utils.
+  recitingTranslation,
+
+  /// Both the Ayah and its translation cleared their thresholds; audio has
+  /// stopped and the streak has been updated.
   completed,
 }

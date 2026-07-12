@@ -14,6 +14,15 @@ class ActiveAlarmSession {
   /// the first speech result arrives.
   final List<bool> matchedWordFlags;
 
+  /// Live match percentage for the English translation-recitation phase
+  /// (`recitingTranslation`), the second gate after the Arabic Ayah.
+  final double translationProgress;
+
+  /// One flag per word of [currentAyahTranslation] (in order), per
+  /// [matchedTranslationWordFlags]. Empty until the Arabic phase clears
+  /// and translation-recitation begins.
+  final List<bool> translationMatchedWordFlags;
+
   /// True if this session reached `completed` via the Emergency Snooze
   /// typed-translation fallback rather than a validated recitation — the
   /// UI uses this to show that the streak was broken, not extended.
@@ -25,12 +34,16 @@ class ActiveAlarmSession {
     required this.currentAyahTranslation,
     this.currentProgress = 0.0,
     this.matchedWordFlags = const <bool>[],
+    this.translationProgress = 0.0,
+    this.translationMatchedWordFlags = const <bool>[],
     this.completedViaEmergencyFallback = false,
   });
 
   ActiveAlarmSession copyWith({
     double? currentProgress,
     List<bool>? matchedWordFlags,
+    double? translationProgress,
+    List<bool>? translationMatchedWordFlags,
     bool? completedViaEmergencyFallback,
   }) {
     return ActiveAlarmSession(
@@ -39,6 +52,9 @@ class ActiveAlarmSession {
       currentAyahTranslation: currentAyahTranslation,
       currentProgress: currentProgress ?? this.currentProgress,
       matchedWordFlags: matchedWordFlags ?? this.matchedWordFlags,
+      translationProgress: translationProgress ?? this.translationProgress,
+      translationMatchedWordFlags:
+          translationMatchedWordFlags ?? this.translationMatchedWordFlags,
       completedViaEmergencyFallback:
           completedViaEmergencyFallback ?? this.completedViaEmergencyFallback,
     );

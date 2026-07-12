@@ -61,6 +61,8 @@ class _AlarmActiveScreenState extends ConsumerState<AlarmActiveScreen>
             AlarmStateEnum.ringing => _RingingLayout(pulseController: _pulseController),
             AlarmStateEnum.reciting =>
               _RecitingLayout(session: sessionState.session),
+            AlarmStateEnum.recitingTranslation =>
+              _RecitingTranslationLayout(session: sessionState.session),
             AlarmStateEnum.completed =>
               _CompletedLayout(session: sessionState.session),
           },
@@ -82,6 +84,7 @@ class _AlarmActiveScreenState extends ConsumerState<AlarmActiveScreen>
           ),
         );
       case AlarmStateEnum.reciting:
+      case AlarmStateEnum.recitingTranslation:
         return AnimatedBuilder(
           animation: _pulseController,
           builder: (context, child) {
@@ -187,6 +190,64 @@ class _RecitingLayout extends StatelessWidget {
         const _EmergencyFallbackButton(),
         const SizedBox(height: 140),
       ],
+    );
+  }
+}
+
+/// The translation-recitation phase, after the Arabic Ayah clears its
+/// threshold: the English translation must now be recited too, matched
+/// and highlighted the same way the Ayah was.
+class _RecitingTranslationLayout extends StatelessWidget {
+  final ActiveAlarmSession? session;
+
+  const _RecitingTranslationLayout({required this.session});
+
+  @override
+  Widget build(BuildContext context) {
+    final ActiveAlarmSession? currentSession = session;
+    if (currentSession == null) {
+      return const Center(child: _MissingSessionMessage());
+    }
+
+    return Column(
+      children: [
+        const Spacer(),
+        _TranslationCard(
+          translation: currentSession.currentAyahTranslation,
+          matchedWordFlags: currentSession.translationMatchedWordFlags,
+        ),
+        const SizedBox(height: 32),
+        _MatchProgressTracker(progress: currentSession.translationProgress),
+        const Spacer(),
+        const _EmergencyFallbackButton(),
+        const SizedBox(height: 140),
+      ],
+    );
+  }
+}
+
+/// Heavily padded card holding the English translation during the
+/// translation-recitation phase — same visual language as [_ArabicAyahCard]
+/// but left-to-right and without the Ayah above it, since by this point
+/// the Ayah has already cleared and its card is off-screen.
+class _TranslationCard extends StatelessWidget {
+  final String translation;
+  final List<bool> matchedWordFlags;
+
+  const _TranslationCard({required this.translation, required this.matchedWordFlags});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: _HighlightedWordText(
+          text: translation,
+          matchedWordFlags: matchedWordFlags,
+          style: Theme.of(context).textTheme.headlineMedium!,
+          textDirection: TextDirection.ltr,
+        ),
+      ),
     );
   }
 }
@@ -327,6 +388,17 @@ class _MatchProgressTracker extends StatelessWidget {
   }
 }
 
+/// Resets the state machine to `idle` and, if this screen was pushed (the
+/// normal case — see `main.dart`'s ringing listener), pops back to
+/// whatever was showing underneath rather than stranding the user on the
+/// bare "No active alarm." placeholder.
+void _finishAndReturnToDashboard(BuildContext context, WidgetRef ref) {
+  ref.read(alarmStateProvider.notifier).resetToIdle();
+  if (Navigator.of(context).canPop()) {
+    Navigator.of(context).pop();
+  }
+}
+
 class _CompletedLayout extends ConsumerWidget {
   final ActiveAlarmSession? session;
 
@@ -354,10 +426,11 @@ class _CompletedLayout extends ConsumerWidget {
           arabicText: currentSession.currentAyahArabic,
           translation: currentSession.currentAyahTranslation,
           matchedWordFlags: currentSession.matchedWordFlags,
+          translationMatchedWordFlags: currentSession.translationMatchedWordFlags,
         ),
         const Spacer(),
         _StartYourDayButton(
-          onPressed: () => ref.read(alarmStateProvider.notifier).resetToIdle(),
+          onPressed: () => _finishAndReturnToDashboard(context, ref),
         ),
         const SizedBox(height: 16),
       ],
@@ -421,11 +494,13 @@ class _ArabicAyahCard extends StatelessWidget {
   final String arabicText;
   final String? translation;
   final List<bool> matchedWordFlags;
+  final List<bool> translationMatchedWordFlags;
 
   const _ArabicAyahCard({
     required this.arabicText,
     this.translation,
     this.matchedWordFlags = const <bool>[],
+    this.translationMatchedWordFlags = const <bool>[],
   });
 
   @override
@@ -438,16 +513,19 @@ class _ArabicAyahCard extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _LiveMatchingArabicText(
-              arabicText: arabicText,
+            _HighlightedWordText(
+              text: arabicText,
               matchedWordFlags: matchedWordFlags,
+              style: AppTextStyles.arabicAyah,
+              textDirection: TextDirection.rtl,
             ),
             if (revealedTranslation != null) ...[
               const SizedBox(height: 24),
-              Text(
-                revealedTranslation,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyLarge,
+              _HighlightedWordText(
+                text: revealedTranslation,
+                matchedWordFlags: translationMatchedWordFlags,
+                style: Theme.of(context).textTheme.bodyLarge!,
+                textDirection: TextDirection.ltr,
               ),
             ],
           ],
@@ -457,32 +535,37 @@ class _ArabicAyahCard extends StatelessWidget {
   }
 }
 
-/// Renders [arabicText] word by word, coloring each word emerald once
-/// [matchedWordFlags] marks it recognized. Word order in [TextSpan]
-/// children stays logical (left-to-right through the string, matching
-/// [matchedWordFlags]'s order); `textDirection: rtl` on the enclosing
-/// [Text.rich] is what lays that logical sequence out right-to-left, so
-/// the spans themselves must not be reversed.
-class _LiveMatchingArabicText extends StatelessWidget {
-  final String arabicText;
+/// Renders [text] word by word, coloring each word emerald once
+/// [matchedWordFlags] marks it recognized. Used for both the Arabic Ayah
+/// (RTL) and the English translation-recitation phase (LTR) — word order
+/// in [TextSpan] children always stays logical (matching [matchedWordFlags]
+/// order); [textDirection] on the enclosing [Text.rich] is what lays that
+/// logical sequence out left-to-right or right-to-left, so the spans
+/// themselves must never be reversed.
+class _HighlightedWordText extends StatelessWidget {
+  final String text;
   final List<bool> matchedWordFlags;
+  final TextStyle style;
+  final TextDirection textDirection;
 
-  const _LiveMatchingArabicText({
-    required this.arabicText,
+  const _HighlightedWordText({
+    required this.text,
     required this.matchedWordFlags,
+    required this.style,
+    required this.textDirection,
   });
 
   @override
   Widget build(BuildContext context) {
     final List<String> words =
-        arabicText.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+        text.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
 
     if (matchedWordFlags.isEmpty || words.isEmpty) {
       return Text(
-        arabicText,
+        text,
         textAlign: TextAlign.center,
-        textDirection: TextDirection.rtl,
-        style: AppTextStyles.arabicAyah,
+        textDirection: textDirection,
+        style: style,
       );
     }
 
@@ -492,16 +575,16 @@ class _LiveMatchingArabicText extends StatelessWidget {
           for (int i = 0; i < words.length; i++)
             TextSpan(
               text: i == words.length - 1 ? words[i] : '${words[i]} ',
-              style: AppTextStyles.arabicAyah.copyWith(
+              style: style.copyWith(
                 color: (i < matchedWordFlags.length && matchedWordFlags[i])
                     ? AppColors.accentEmerald
-                    : AppTextStyles.arabicAyah.color,
+                    : style.color,
               ),
             ),
         ],
       ),
       textAlign: TextAlign.center,
-      textDirection: TextDirection.rtl,
+      textDirection: textDirection,
     );
   }
 }

@@ -2,31 +2,60 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tarteel_rise/models/alarm_model.dart';
+import 'package:tarteel_rise/models/alarm_state_enum.dart';
 import 'package:tarteel_rise/providers/alarm_state_provider.dart';
 import 'package:tarteel_rise/services/alarm_hardware_service.dart';
 import 'package:tarteel_rise/services/database_service.dart';
 import 'package:tarteel_rise/services/speech_service.dart';
 
+const String _alFatihaAyahsOneAndTwo =
+    'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ';
+const String _placeholderTranslation = 'It is You we worship and You we ask for help.';
+
+/// [AlarmHardwareService.resumeAdhanPlayback] goes through real
+/// `just_audio`, which has no plugin implementation in a plain Dart test
+/// and fails in ways that escape a surrounding try/catch (its own internal
+/// dispose/init sequencing runs in a separate zone). What the
+/// resume-timeout test actually needs to verify is the state machine's own
+/// behavior — that it calls resume and drops back to `ringing` — not
+/// `just_audio`'s plugin behavior, so this fakes just that one call.
+class _FakeAlarmHardwareService extends AlarmHardwareService {
+  bool resumeAdhanPlaybackCalled = false;
+
+  _FakeAlarmHardwareService() : super(nativeCallTimeout: const Duration(milliseconds: 50));
+
+  @override
+  Future<void> resumeAdhanPlayback() async {
+    resumeAdhanPlaybackCalled = true;
+  }
+}
+
 void main() {
   late Directory tempHiveDir;
   late DatabaseService databaseService;
-  late AlarmStateNotifier notifier;
+
+  AlarmStateNotifier buildNotifier({
+    Duration? resumeGracePeriod,
+    AlarmHardwareService? alarmHardwareService,
+  }) {
+    final AlarmStateNotifier notifier = AlarmStateNotifier(
+      speechService: SpeechService(),
+      alarmHardwareService: alarmHardwareService ??
+          AlarmHardwareService(nativeCallTimeout: const Duration(milliseconds: 50)),
+      databaseService: databaseService,
+      resumeGracePeriod: resumeGracePeriod ?? const Duration(minutes: 4),
+    );
+    // The kDebugMode preview seed puts the notifier straight into
+    // `reciting` on construction — reset to a clean `idle` state so each
+    // test's own alarm can drive the state machine from the top.
+    notifier.resetToIdle();
+    return notifier;
+  }
 
   setUp(() async {
     tempHiveDir = Directory.systemTemp.createTempSync('bookmark_timing_test_hive');
     databaseService = DatabaseService();
     await databaseService.init(testHiveDirectoryPath: tempHiveDir.path);
-
-    notifier = AlarmStateNotifier(
-      speechService: SpeechService(),
-      alarmHardwareService:
-          AlarmHardwareService(nativeCallTimeout: const Duration(milliseconds: 50)),
-      databaseService: databaseService,
-    );
-    // The kDebugMode preview seed puts the notifier straight into
-    // `reciting` on construction — reset to a clean `idle` state so this
-    // test's own alarm can drive the state machine from the top.
-    notifier.resetToIdle();
   });
 
   tearDown(() {
@@ -47,56 +76,88 @@ void main() {
     );
   }
 
-  test('advances the bookmark only after a validated recitation clears the threshold', () async {
+  test('clearing the Arabic Ayah moves to recitingTranslation, not completed', () async {
+    final AlarmStateNotifier notifier = buildNotifier();
     final AlarmModel alarm = buildAlFatihaAlarm();
     await databaseService.saveAlarm(alarm);
 
-    notifier.triggerAlarmSession(
-      alarm,
-      'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ',
-      'placeholder translation',
-    );
+    notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
     await notifier.startVoiceCapture();
+    await notifier.processSpeechInput(_alFatihaAyahsOneAndTwo);
 
-    // A recognized recitation that fully matches the displayed text clears
-    // even the strictest threshold.
-    await notifier.processSpeechInput(
-      'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ',
-    );
+    expect(notifier.state.state, AlarmStateEnum.recitingTranslation);
 
-    final AlarmModel persisted =
-        databaseService.getAllAlarms().firstWhere((a) => a.id == alarm.id);
-    // Started at ayah 1, read 2 ayahs (1-2), should resume from ayah 3.
-    expect(persisted.currentBookmarkAyah, 3);
-  });
-
-  test('leaves the bookmark untouched when nothing is recognized', () async {
-    final AlarmModel alarm = buildAlFatihaAlarm();
-    await databaseService.saveAlarm(alarm);
-
-    notifier.triggerAlarmSession(
-      alarm,
-      'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ',
-      'placeholder translation',
-    );
-    await notifier.startVoiceCapture();
-
-    await notifier.processSpeechInput('completely unrelated speech');
-
+    // Neither the streak nor the bookmark should move yet — only the
+    // Arabic half of the flow has cleared.
     final AlarmModel persisted =
         databaseService.getAllAlarms().firstWhere((a) => a.id == alarm.id);
     expect(persisted.currentBookmarkAyah, 1);
   });
 
-  test('leaves the bookmark untouched on an Emergency Snooze', () async {
+  test(
+    'advances the bookmark and records the streak only after BOTH the Ayah and its translation clear',
+    () async {
+      final AlarmStateNotifier notifier = buildNotifier();
+      final AlarmModel alarm = buildAlFatihaAlarm();
+      await databaseService.saveAlarm(alarm);
+
+      notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
+      await notifier.startVoiceCapture();
+      await notifier.processSpeechInput(_alFatihaAyahsOneAndTwo);
+      await notifier.processTranslationSpeechInput(_placeholderTranslation);
+
+      expect(notifier.state.state, AlarmStateEnum.completed);
+
+      final AlarmModel persisted =
+          databaseService.getAllAlarms().firstWhere((a) => a.id == alarm.id);
+      // Started at ayah 1, read 2 ayahs (1-2), should resume from ayah 3.
+      expect(persisted.currentBookmarkAyah, 3);
+    },
+  );
+
+  test('leaves the bookmark untouched when the Arabic is never recognized', () async {
+    final AlarmStateNotifier notifier = buildNotifier();
     final AlarmModel alarm = buildAlFatihaAlarm();
     await databaseService.saveAlarm(alarm);
 
-    notifier.triggerAlarmSession(alarm, 'أي آية', 'It is You we worship and You we ask for help.');
+    notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
+    await notifier.startVoiceCapture();
+    await notifier.processSpeechInput('completely unrelated speech');
 
-    final bool accepted = await notifier.submitEmergencyTranslationFallback(
-      'It is You we worship and You we ask for help.',
-    );
+    expect(notifier.state.state, AlarmStateEnum.reciting);
+    final AlarmModel persisted =
+        databaseService.getAllAlarms().firstWhere((a) => a.id == alarm.id);
+    expect(persisted.currentBookmarkAyah, 1);
+  });
+
+  test(
+    'leaves the bookmark untouched when the Ayah clears but the translation never does',
+    () async {
+      final AlarmStateNotifier notifier = buildNotifier();
+      final AlarmModel alarm = buildAlFatihaAlarm();
+      await databaseService.saveAlarm(alarm);
+
+      notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
+      await notifier.startVoiceCapture();
+      await notifier.processSpeechInput(_alFatihaAyahsOneAndTwo);
+      await notifier.processTranslationSpeechInput('completely unrelated speech');
+
+      expect(notifier.state.state, AlarmStateEnum.recitingTranslation);
+      final AlarmModel persisted =
+          databaseService.getAllAlarms().firstWhere((a) => a.id == alarm.id);
+      expect(persisted.currentBookmarkAyah, 1);
+    },
+  );
+
+  test('leaves the bookmark untouched on an Emergency Snooze', () async {
+    final AlarmStateNotifier notifier = buildNotifier();
+    final AlarmModel alarm = buildAlFatihaAlarm();
+    await databaseService.saveAlarm(alarm);
+
+    notifier.triggerAlarmSession(alarm, 'أي آية', _placeholderTranslation);
+
+    final bool accepted =
+        await notifier.submitEmergencyTranslationFallback(_placeholderTranslation);
 
     expect(accepted, isTrue);
     final AlarmModel persisted =
@@ -104,23 +165,86 @@ void main() {
     expect(persisted.currentBookmarkAyah, 1);
   });
 
+  test('Emergency Snooze also works during the translation-recitation phase', () async {
+    final AlarmStateNotifier notifier = buildNotifier();
+    final AlarmModel alarm = buildAlFatihaAlarm();
+    await databaseService.saveAlarm(alarm);
+
+    notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
+    await notifier.startVoiceCapture();
+    await notifier.processSpeechInput(_alFatihaAyahsOneAndTwo);
+    expect(notifier.state.state, AlarmStateEnum.recitingTranslation);
+
+    final bool accepted =
+        await notifier.submitEmergencyTranslationFallback(_placeholderTranslation);
+
+    expect(accepted, isTrue);
+    expect(notifier.state.state, AlarmStateEnum.completed);
+    expect(notifier.state.session?.completedViaEmergencyFallback, isTrue);
+  });
+
   test('wraps the bookmark back to 1 once the Surah is exhausted', () async {
+    final AlarmStateNotifier notifier = buildNotifier();
     final AlarmModel alarm = buildAlFatihaAlarm(currentBookmarkAyah: 6);
     await databaseService.saveAlarm(alarm);
 
-    notifier.triggerAlarmSession(
-      alarm,
-      'اهْدِنَا الصِّرَاطَ الْمُسْتَقِيمَ صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ',
-      'placeholder translation',
-    );
+    const String ayahsSixAndSeven =
+        'اهْدِنَا الصِّرَاطَ الْمُسْتَقِيمَ صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ';
+
+    notifier.triggerAlarmSession(alarm, ayahsSixAndSeven, _placeholderTranslation);
     await notifier.startVoiceCapture();
-    await notifier.processSpeechInput(
-      'اهْدِنَا الصِّرَاطَ الْمُسْتَقِيمَ صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ',
-    );
+    await notifier.processSpeechInput(ayahsSixAndSeven);
+    await notifier.processTranslationSpeechInput(_placeholderTranslation);
 
     final AlarmModel persisted =
         databaseService.getAllAlarms().firstWhere((a) => a.id == alarm.id);
     // Started at ayah 6 (of 7), requested 2 -> clamped to [6, 7] -> wraps to 1.
     expect(persisted.currentBookmarkAyah, 1);
+  });
+
+  test(
+    'resumes the Adhan and drops back to ringing if the flow is not completed in time',
+    () async {
+      final _FakeAlarmHardwareService fakeHardware = _FakeAlarmHardwareService();
+      final AlarmStateNotifier notifier = buildNotifier(
+        resumeGracePeriod: const Duration(milliseconds: 30),
+        alarmHardwareService: fakeHardware,
+      );
+      final AlarmModel alarm = buildAlFatihaAlarm();
+      await databaseService.saveAlarm(alarm);
+
+      notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
+      await notifier.startVoiceCapture();
+      expect(notifier.state.state, AlarmStateEnum.reciting);
+
+      // Never recite anything — let the grace period lapse.
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect(fakeHardware.resumeAdhanPlaybackCalled, isTrue);
+      expect(notifier.state.state, AlarmStateEnum.ringing);
+      // The session (Ayah/translation text, alarm reference) survives the
+      // timeout so tapping "Tap to Recite" again works normally.
+      expect(notifier.state.session?.currentAyahArabic, _alFatihaAyahsOneAndTwo);
+    },
+  );
+
+  test('does not resume the Adhan if the flow completed before the grace period', () async {
+    final AlarmStateNotifier notifier = buildNotifier(
+      resumeGracePeriod: const Duration(milliseconds: 30),
+    );
+    final AlarmModel alarm = buildAlFatihaAlarm();
+    await databaseService.saveAlarm(alarm);
+
+    notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
+    await notifier.startVoiceCapture();
+    await notifier.processSpeechInput(_alFatihaAyahsOneAndTwo);
+    await notifier.processTranslationSpeechInput(_placeholderTranslation);
+    expect(notifier.state.state, AlarmStateEnum.completed);
+
+    // Let the grace period lapse well after completion — it must not have
+    // been left running and yank the state back to `ringing`.
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+
+    expect(notifier.state.state, AlarmStateEnum.completed);
   });
 }
