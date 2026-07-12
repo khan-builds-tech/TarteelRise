@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/surah_catalog.dart';
 import '../../models/alarm_model.dart';
 import '../../models/user_stats_model.dart';
+import '../../providers/alarm_state_provider.dart';
 import '../../providers/dashboard_providers.dart';
 import '../../theme/app_theme.dart';
 import 'alarm_active_screen.dart';
@@ -86,6 +87,7 @@ class _TestActiveAlarmUiButton extends ConsumerWidget {
       width: double.infinity,
       child: OutlinedButton.icon(
         onPressed: () async {
+          ref.read(alarmStateProvider.notifier).seedPreviewSessionForDebug();
           await Navigator.of(context).push(
             MaterialPageRoute<void>(
               builder: (_) => const AlarmActiveScreen(),

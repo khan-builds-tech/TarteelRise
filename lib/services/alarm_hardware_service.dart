@@ -38,6 +38,17 @@ class AlarmHardwareService {
 
   AlarmHardwareService({this.nativeCallTimeout = const Duration(seconds: 10)});
 
+  /// Re-registers every enabled alarm's next fire time. The `alarm` package
+  /// has no native day-of-week recurrence, so this must run on each cold
+  /// launch (and after an alarm fires) to roll one-shot schedules forward.
+  Future<void> rescheduleAllEnabledAlarms(List<AlarmModel> alarms) async {
+    for (final AlarmModel alarm in alarms) {
+      if (alarm.isEnabled) {
+        await scheduleMorningAlarm(alarm);
+      }
+    }
+  }
+
   /// Registers the native alarm ports and reschedules any alarms that were
   /// still pending from a previous app session. Must be called once before
   /// [scheduleMorningAlarm] or [stopActiveAlarmSound] are used.

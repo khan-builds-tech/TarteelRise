@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'models/alarm_model.dart';
 import 'models/alarm_state_enum.dart';
 import 'providers/alarm_state_provider.dart';
+import 'providers/dashboard_providers.dart';
 import 'services/alarm_hardware_service.dart';
 import 'services/alarm_ringing_listener.dart';
 import 'services/database_service.dart';
@@ -38,6 +39,11 @@ Future<void> main() async {
   final AlarmHardwareService alarmHardwareService =
       container.read(alarmHardwareServiceProvider);
   await alarmHardwareService.initializeHardware();
+  await alarmHardwareService.rescheduleAllEnabledAlarms(databaseService.getAllAlarms());
+
+  // Pre-warm the on-device speech engine so the first "Tap to Recite" during
+  // a wake-up doesn't stall on a cold permission/init handshake.
+  await container.read(speechServiceProvider).initializeSpeech();
 
   final AlarmRingingListener ringingListener = AlarmRingingListener(
     databaseService: databaseService,
@@ -60,7 +66,11 @@ Future<void> main() async {
         _isActiveAlarmScreenShowing = true;
         navigatorKey.currentState
             ?.push(MaterialPageRoute<void>(builder: (_) => const AlarmActiveScreen()))
-            .then((_) => _isActiveAlarmScreenShowing = false);
+            .then((_) {
+          _isActiveAlarmScreenShowing = false;
+          container.read(userStatsProvider.notifier).refresh();
+          container.read(alarmListProvider.notifier).refresh();
+        });
       }
     },
   );

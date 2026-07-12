@@ -30,6 +30,26 @@ class _FakeAlarmHardwareService extends AlarmHardwareService {
   }
 }
 
+/// The real [SpeechService] needs a platform channel that plain Dart tests
+/// don't have — without this fake, [AlarmStateNotifier.startVoiceCapture]
+/// rolls back to `ringing` when init fails.
+class _FakeSpeechService extends SpeechService {
+  @override
+  bool get isInitialized => true;
+
+  @override
+  Future<bool> initializeSpeech() async => true;
+
+  @override
+  Future<void> startListening({
+    required List<String> localePreferenceOrder,
+    required void Function(String recognizedText) onRecognized,
+  }) async {}
+
+  @override
+  Future<void> stopListening() async {}
+}
+
 void main() {
   late Directory tempHiveDir;
   late DatabaseService databaseService;
@@ -37,17 +57,17 @@ void main() {
   AlarmStateNotifier buildNotifier({
     Duration? resumeGracePeriod,
     AlarmHardwareService? alarmHardwareService,
+    SpeechService? speechService,
   }) {
     final AlarmStateNotifier notifier = AlarmStateNotifier(
-      speechService: SpeechService(),
+      speechService: speechService ?? _FakeSpeechService(),
       alarmHardwareService: alarmHardwareService ??
           AlarmHardwareService(nativeCallTimeout: const Duration(milliseconds: 50)),
       databaseService: databaseService,
       resumeGracePeriod: resumeGracePeriod ?? const Duration(minutes: 4),
     );
-    // The kDebugMode preview seed puts the notifier straight into
-    // `reciting` on construction — reset to a clean `idle` state so each
-    // test's own alarm can drive the state machine from the top.
+    // Reset to a clean `idle` state so each test drives the machine from
+    // the top via its own `triggerAlarmSession` call.
     notifier.resetToIdle();
     return notifier;
   }
@@ -247,4 +267,28 @@ void main() {
 
     expect(notifier.state.state, AlarmStateEnum.completed);
   });
+
+  test('rolls back to ringing when speech initialization fails', () async {
+    final _FakeAlarmHardwareService fakeHardware = _FakeAlarmHardwareService();
+
+    final AlarmStateNotifier notifier = buildNotifier(
+      alarmHardwareService: fakeHardware,
+      speechService: _UninitializedSpeechService(),
+    );
+    final AlarmModel alarm = buildAlFatihaAlarm();
+
+    notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
+    await notifier.startVoiceCapture();
+
+    expect(fakeHardware.resumeAdhanPlaybackCalled, isTrue);
+    expect(notifier.state.state, AlarmStateEnum.ringing);
+  });
+}
+
+class _UninitializedSpeechService extends SpeechService {
+  @override
+  bool get isInitialized => false;
+
+  @override
+  Future<bool> initializeSpeech() async => false;
 }

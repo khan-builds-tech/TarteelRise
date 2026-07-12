@@ -88,18 +88,18 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     required this.alarmHardwareService,
     required this.databaseService,
     this.resumeGracePeriod = const Duration(minutes: 4),
-  }) : super(const AlarmSessionState()) {
-    if (kDebugMode) {
-      _seedMockRecitingSessionForPreview();
-    }
+  }) : super(const AlarmSessionState());
+
+  // TEMPORARY — DEBUG ONLY. Seeds a fake `reciting` session so the
+  // active-alarm layout (pulsing mic, Arabic text, live match tracker) is
+  // visible without a real scheduled alarm. Invoked explicitly from the
+  // Dashboard debug button — not at startup — so debug builds can still
+  // exercise the real `idle -> ringing` path when a native alarm fires.
+  void seedPreviewSessionForDebug() {
+    if (!kDebugMode) return;
+    _seedMockRecitingSessionForPreview();
   }
 
-  // TEMPORARY — UI PREVIEW ONLY. Seeds a fake `reciting` session at
-  // startup so the active-alarm layout (pulsing mic, Arabic text, live
-  // match tracker) is visible without a real scheduled alarm or Quran
-  // verse database driving it. Gated on `kDebugMode` so the Dart compiler
-  // strips this out of release builds entirely. Remove once real alarm
-  // scheduling + Ayah lookup call `triggerAlarmSession` for real.
   void _seedMockRecitingSessionForPreview() {
     final AlarmModel mockAlarm = AlarmModel(
       id: 'preview-mock-alarm',
@@ -143,7 +143,6 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     if (state.state != AlarmStateEnum.ringing) return;
 
     final ActiveAlarmSession? session = state.session;
-    state = state.copyWith(state: AlarmStateEnum.reciting);
 
     if (session != null) {
       await alarmHardwareService.duckAlarmForRecitation(
@@ -151,6 +150,15 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
       );
     }
 
+    if (!speechService.isInitialized) {
+      final bool speechReady = await speechService.initializeSpeech();
+      if (!speechReady) {
+        await alarmHardwareService.resumeAdhanPlayback();
+        return;
+      }
+    }
+
+    state = state.copyWith(state: AlarmStateEnum.reciting);
     _scheduleResumeIfIncomplete();
     await speechService.startListening(
       localePreferenceOrder: arabicLocalePreferenceOrder,

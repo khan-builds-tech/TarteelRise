@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../models/active_alarm_session.dart';
 import '../../models/alarm_state_enum.dart';
 import '../../providers/alarm_state_provider.dart';
+import '../../providers/dashboard_providers.dart';
 import '../../theme/app_theme.dart';
 
 /// The full-screen wake-up flow: ringing -> reciting -> completed. Layout is
@@ -394,6 +395,8 @@ class _MatchProgressTracker extends StatelessWidget {
 /// bare "No active alarm." placeholder.
 void _finishAndReturnToDashboard(BuildContext context, WidgetRef ref) {
   ref.read(alarmStateProvider.notifier).resetToIdle();
+  ref.read(userStatsProvider.notifier).refresh();
+  ref.read(alarmListProvider.notifier).refresh();
   if (Navigator.of(context).canPop()) {
     Navigator.of(context).pop();
   }
