@@ -18,43 +18,54 @@ String normalizeArabicText(String input) {
   return output.trim().replaceAll(_whitespace, ' ');
 }
 
-/// Compares [original] (reference Ayah text) against [recognized] (raw
-/// speech-to-text output), normalizing both first, and returns a match
-/// rate between 0.0 and 100.0.
+List<String> _normalizedWords(String text) {
+  return normalizeArabicText(text)
+      .split(' ')
+      .where((word) => word.isNotEmpty)
+      .toList();
+}
+
+/// Per-word match result of [original] (reference Ayah text) against
+/// [recognized] (raw speech-to-text output): one flag per word of
+/// [original], in order, `true` if that word was found among
+/// [recognized]'s words.
 ///
-/// Scoring is word-frequency based rather than strict order/equality: each
-/// word in [original] is matched against the multiset of words in
-/// [recognized], so reordering or a single dropped word only partially
-/// lowers the score instead of failing the whole comparison outright.
-double calculateMatchPercentage(String original, String recognized) {
-  final List<String> originalWords = normalizeArabicText(original)
-      .split(' ')
-      .where((word) => word.isNotEmpty)
-      .toList();
-
-  if (originalWords.isEmpty) {
-    return 0.0;
-  }
-
-  final List<String> recognizedWords = normalizeArabicText(recognized)
-      .split(' ')
-      .where((word) => word.isNotEmpty)
-      .toList();
+/// Matching is word-frequency based, not positional: each word in
+/// [original] is checked off against the multiset of words in
+/// [recognized], so reordering or a single dropped word only flips that
+/// one word's flag instead of misaligning everything after it. This is
+/// the same rule [calculateMatchPercentage] uses — it's built on top of
+/// this function — so per-word UI highlighting always agrees with the
+/// aggregate score.
+List<bool> matchedWordFlags(String original, String recognized) {
+  final List<String> originalWords = _normalizedWords(original);
+  final List<String> recognizedWords = _normalizedWords(recognized);
 
   final Map<String, int> recognizedCounts = <String, int>{};
   for (final String word in recognizedWords) {
     recognizedCounts[word] = (recognizedCounts[word] ?? 0) + 1;
   }
 
-  int matchedCount = 0;
-  for (final String word in originalWords) {
+  return originalWords.map((word) {
     final int remaining = recognizedCounts[word] ?? 0;
     if (remaining > 0) {
-      matchedCount++;
       recognizedCounts[word] = remaining - 1;
+      return true;
     }
+    return false;
+  }).toList();
+}
+
+/// Compares [original] (reference Ayah text) against [recognized] (raw
+/// speech-to-text output), normalizing both first, and returns a match
+/// rate between 0.0 and 100.0.
+double calculateMatchPercentage(String original, String recognized) {
+  final List<bool> flags = matchedWordFlags(original, recognized);
+  if (flags.isEmpty) {
+    return 0.0;
   }
 
-  final double percentage = (matchedCount / originalWords.length) * 100.0;
+  final int matchedCount = flags.where((matched) => matched).length;
+  final double percentage = (matchedCount / flags.length) * 100.0;
   return percentage.clamp(0.0, 100.0);
 }

@@ -9,12 +9,24 @@ import '../models/alarm_model.dart';
 class AlarmHardwareService {
   static const String adhanAssetPath = 'assets/audio/adhan.mp3';
 
+  /// A stuck platform channel (missing plugin registration, an unresponsive
+  /// native side) doesn't throw — it just never completes the `Future`,
+  /// which `try`/`catch` can't do anything about. Every native call below
+  /// is wrapped in [Future.timeout] specifically so a hang can never block
+  /// the state machine forever; it becomes an ordinary, catchable
+  /// [TimeoutException] instead. Overridable so tests don't have to wait
+  /// out the real production duration against a channel that will never
+  /// respond.
+  final Duration nativeCallTimeout;
+
+  AlarmHardwareService({this.nativeCallTimeout = const Duration(seconds: 10)});
+
   /// Registers the native alarm ports and reschedules any alarms that were
   /// still pending from a previous app session. Must be called once before
   /// [scheduleMorningAlarm] or [stopActiveAlarmSound] are used.
   Future<bool> initializeHardware() async {
     try {
-      await Alarm.init();
+      await Alarm.init().timeout(nativeCallTimeout);
       return true;
     } catch (error, stackTrace) {
       debugPrint(
@@ -60,7 +72,7 @@ class AlarmHardwareService {
         ),
       );
 
-      return await Alarm.set(alarmSettings: nativeSettings);
+      return await Alarm.set(alarmSettings: nativeSettings).timeout(nativeCallTimeout);
     } catch (error, stackTrace) {
       debugPrint(
         'AlarmHardwareService.scheduleMorningAlarm failed: $error\n$stackTrace',
@@ -87,7 +99,7 @@ class AlarmHardwareService {
   /// [alarmId] (a native id produced by [nativeAlarmIdFor]).
   Future<bool> stopActiveAlarmSound(int alarmId) async {
     try {
-      return await Alarm.stop(alarmId);
+      return await Alarm.stop(alarmId).timeout(nativeCallTimeout);
     } catch (error, stackTrace) {
       debugPrint(
         'AlarmHardwareService.stopActiveAlarmSound failed: $error\n$stackTrace',

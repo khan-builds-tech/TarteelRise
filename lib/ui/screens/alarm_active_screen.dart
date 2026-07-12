@@ -138,6 +138,8 @@ class _RingingLayout extends StatelessWidget {
           },
           child: const _FlashDot(),
         ),
+        const Spacer(),
+        const _EmergencyFallbackButton(),
         const SizedBox(height: 140),
       ],
     );
@@ -175,11 +177,110 @@ class _RecitingLayout extends StatelessWidget {
     return Column(
       children: [
         const Spacer(),
-        _ArabicAyahCard(arabicText: currentSession.currentAyahArabic),
+        _ArabicAyahCard(
+          arabicText: currentSession.currentAyahArabic,
+          matchedWordFlags: currentSession.matchedWordFlags,
+        ),
         const SizedBox(height: 32),
         _MatchProgressTracker(progress: currentSession.currentProgress),
         const Spacer(),
+        const _EmergencyFallbackButton(),
         const SizedBox(height: 140),
+      ],
+    );
+  }
+}
+
+/// Entry point to the Emergency Snooze fallback — for when the user
+/// genuinely cannot speak. Deliberately understated (a text button, not a
+/// FAB) so it never competes with the primary voice-recitation flow.
+class _EmergencyFallbackButton extends ConsumerWidget {
+  const _EmergencyFallbackButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return TextButton.icon(
+      onPressed: () => _showEmergencyFallbackDialog(context, ref),
+      icon: const Icon(Icons.keyboard),
+      label: const Text("Can't speak? Type the translation instead"),
+    );
+  }
+
+  Future<void> _showEmergencyFallbackDialog(BuildContext context, WidgetRef ref) {
+    return showDialog<void>(
+      context: context,
+      builder: (_) => const _EmergencyFallbackDialog(),
+    );
+  }
+}
+
+class _EmergencyFallbackDialog extends ConsumerStatefulWidget {
+  const _EmergencyFallbackDialog();
+
+  @override
+  ConsumerState<_EmergencyFallbackDialog> createState() =>
+      _EmergencyFallbackDialogState();
+}
+
+class _EmergencyFallbackDialogState extends ConsumerState<_EmergencyFallbackDialog> {
+  final TextEditingController _controller = TextEditingController();
+  String? _errorText;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final bool accepted = await ref
+        .read(alarmStateProvider.notifier)
+        .submitEmergencyTranslationFallback(_controller.text);
+
+    if (!mounted) return;
+
+    if (accepted) {
+      Navigator.of(context).pop();
+    } else {
+      setState(() => _errorText = "That doesn't match — check spelling and try again.");
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Emergency Snooze'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Type the English translation of the Ayah to silence the alarm. '
+            'This breaks your streak.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            maxLines: 3,
+            decoration: InputDecoration(
+              hintText: 'English translation',
+              errorText: _errorText,
+            ),
+            onSubmitted: (_) => _submit(),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: const Text('Submit'),
+        ),
       ],
     );
   }
@@ -245,9 +346,14 @@ class _CompletedLayout extends ConsumerWidget {
     return Column(
       children: [
         const SizedBox(height: 16),
+        if (currentSession.completedViaEmergencyFallback) ...[
+          const _EmergencySnoozeBanner(),
+          const SizedBox(height: 16),
+        ],
         _ArabicAyahCard(
           arabicText: currentSession.currentAyahArabic,
           translation: currentSession.currentAyahTranslation,
+          matchedWordFlags: currentSession.matchedWordFlags,
         ),
         const Spacer(),
         _StartYourDayButton(
@@ -255,6 +361,39 @@ class _CompletedLayout extends ConsumerWidget {
         ),
         const SizedBox(height: 16),
       ],
+    );
+  }
+}
+
+/// Shown on the completed screen when the alarm was silenced via the
+/// Emergency Snooze fallback instead of a validated recitation, so the
+/// user can see plainly that their streak was reset rather than extended.
+class _EmergencySnoozeBanner extends StatelessWidget {
+  const _EmergencySnoozeBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: Colors.redAccent, width: 1.5),
+      ),
+      child: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        child: Row(
+          children: [
+            Icon(Icons.local_fire_department, color: Colors.redAccent),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Emergency Snooze used — your streak has been reset to 0.',
+                style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -274,11 +413,20 @@ class _MissingSessionMessage extends StatelessWidget {
 /// The heavily padded card holding the target Ayah, per the spec's Screen
 /// Layout Blueprint. When [translation] is provided (post-completion) it is
 /// revealed underneath the Arabic script.
+///
+/// When [matchedWordFlags] is non-empty, each word of [arabicText] is
+/// colored individually — emerald once recognized, default otherwise —
+/// as live real-time feedback while the user recites.
 class _ArabicAyahCard extends StatelessWidget {
   final String arabicText;
   final String? translation;
+  final List<bool> matchedWordFlags;
 
-  const _ArabicAyahCard({required this.arabicText, this.translation});
+  const _ArabicAyahCard({
+    required this.arabicText,
+    this.translation,
+    this.matchedWordFlags = const <bool>[],
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -290,11 +438,9 @@ class _ArabicAyahCard extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              arabicText,
-              textAlign: TextAlign.center,
-              textDirection: TextDirection.rtl,
-              style: AppTextStyles.arabicAyah,
+            _LiveMatchingArabicText(
+              arabicText: arabicText,
+              matchedWordFlags: matchedWordFlags,
             ),
             if (revealedTranslation != null) ...[
               const SizedBox(height: 24),
@@ -307,6 +453,55 @@ class _ArabicAyahCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Renders [arabicText] word by word, coloring each word emerald once
+/// [matchedWordFlags] marks it recognized. Word order in [TextSpan]
+/// children stays logical (left-to-right through the string, matching
+/// [matchedWordFlags]'s order); `textDirection: rtl` on the enclosing
+/// [Text.rich] is what lays that logical sequence out right-to-left, so
+/// the spans themselves must not be reversed.
+class _LiveMatchingArabicText extends StatelessWidget {
+  final String arabicText;
+  final List<bool> matchedWordFlags;
+
+  const _LiveMatchingArabicText({
+    required this.arabicText,
+    required this.matchedWordFlags,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final List<String> words =
+        arabicText.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+
+    if (matchedWordFlags.isEmpty || words.isEmpty) {
+      return Text(
+        arabicText,
+        textAlign: TextAlign.center,
+        textDirection: TextDirection.rtl,
+        style: AppTextStyles.arabicAyah,
+      );
+    }
+
+    return Text.rich(
+      TextSpan(
+        children: [
+          for (int i = 0; i < words.length; i++)
+            TextSpan(
+              text: i == words.length - 1 ? words[i] : '${words[i]} ',
+              style: AppTextStyles.arabicAyah.copyWith(
+                color: (i < matchedWordFlags.length && matchedWordFlags[i])
+                    ? AppColors.accentEmerald
+                    : AppTextStyles.arabicAyah.color,
+              ),
+            ),
+        ],
+      ),
+      textAlign: TextAlign.center,
+      textDirection: TextDirection.rtl,
     );
   }
 }

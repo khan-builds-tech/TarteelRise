@@ -6,8 +6,9 @@ import 'providers/alarm_state_provider.dart';
 import 'services/alarm_hardware_service.dart';
 import 'services/alarm_ringing_listener.dart';
 import 'services/database_service.dart';
+import 'services/quran_repository.dart';
 import 'theme/app_theme.dart';
-import 'ui/screens/alarm_active_screen.dart';
+import 'ui/screens/alarm_dashboard_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,7 +29,7 @@ Future<void> main() async {
   final AlarmRingingListener ringingListener = AlarmRingingListener(
     databaseService: databaseService,
     alarmStateNotifier: container.read(alarmStateProvider.notifier),
-    resolveAyahContent: _resolvePlaceholderAyahContent,
+    resolveAyahContent: _resolveAyahContent,
   );
   ringingListener.start();
 
@@ -40,16 +41,20 @@ Future<void> main() async {
   );
 }
 
-/// Stands in for the Quran verse database (Section 4 of the product spec)
-/// until that content layer — Surah lookup, bookmarking, per-alarm Ayah
-/// selection — is built. Returns a real Ayah (Al-Fatiha, verse 1) rather
-/// than dummy text, so the ringing -> reciting -> completed flow is fully
-/// exercisable end to end in the meantime.
-Future<AyahContent> _resolvePlaceholderAyahContent(AlarmModel alarm) async {
-  return const AyahContent(
-    arabicText: 'بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ',
-    translation: 'In the name of Allah, the Entirely Merciful, the Especially Merciful.',
+/// Looks up this session's Ayah content from [QuranRepository] — Surah +
+/// bookmark from [alarm]. Deliberately does NOT advance the bookmark here:
+/// that only happens once [AlarmStateNotifier] confirms a validated
+/// recitation, so a missed or failed morning re-reads the same ayahs
+/// tomorrow instead of silently skipping ahead.
+Future<AyahContent> _resolveAyahContent(AlarmModel alarm) async {
+  const QuranRepository quranRepository = QuranRepository();
+  final QuranSession session = quranRepository.buildSession(
+    surahIndex: alarm.selectedSurahIndex,
+    startAyah: alarm.currentBookmarkAyah,
+    requestedAyahCount: alarm.numberOfAyahs,
   );
+
+  return AyahContent(arabicText: session.arabicText, translation: session.translation);
 }
 
 class TarteelRiseApp extends StatelessWidget {
@@ -61,7 +66,7 @@ class TarteelRiseApp extends StatelessWidget {
       title: 'Tarteel Rise',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
-      home: const AlarmActiveScreen(),
+      home: const AlarmDashboardScreen(),
     );
   }
 }

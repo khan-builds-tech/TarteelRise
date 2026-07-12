@@ -59,4 +59,29 @@ void main() {
       expect(calculateMatchPercentage('', 'بسم الله'), 0.0);
     });
   });
+
+  group('matchedWordFlags', () {
+    test('flags every word true on an exact match', () {
+      const String original = 'الحمد لله رب العالمين';
+      expect(matchedWordFlags(original, original), [true, true, true, true]);
+    });
+
+    test('flags only the words actually recognized, preserving order', () {
+      const String original = 'الحمد لله رب العالمين';
+      const String recognized = 'الحمد رب';
+
+      expect(matchedWordFlags(original, recognized), [true, false, true, false]);
+    });
+
+    test('flags a repeated word only as many times as it was recognized', () {
+      const String original = 'الله الله الله';
+      const String recognized = 'الله الله';
+
+      expect(matchedWordFlags(original, recognized), [true, true, false]);
+    });
+
+    test('returns an empty list for an empty reference string', () {
+      expect(matchedWordFlags('', 'بسم الله'), <bool>[]);
+    });
+  });
 }
