@@ -67,8 +67,8 @@ class AlarmSessionState {
   }
 }
 
-/// Drives the `idle -> ringing -> reciting -> recitingTranslation ->
-/// completed` state machine. Every transition is guarded by the state it
+/// Drives the `idle -> ringing -> paused -> reciting -> recitingTranslation
+/// -> completed` state machine. Every transition is guarded by the state it
 /// must originate from, so a stray or duplicate call (e.g. a double-tap on
 /// the mic button) can never leave the session in an inconsistent state.
 class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
@@ -139,21 +139,29 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     );
   }
 
-  Future<void> startVoiceCapture() async {
+  /// Step one of the wake-up flow: silence the Adhan and reveal the Ayah
+  /// so the user can read it before opening the microphone.
+  Future<void> pauseAdhanForReview() async {
     if (state.state != AlarmStateEnum.ringing) return;
 
     final ActiveAlarmSession? session = state.session;
-
     if (session != null) {
       await alarmHardwareService.duckAlarmForRecitation(
         AlarmHardwareService.nativeAlarmIdFor(session.activeAlarm.id),
       );
     }
 
+    state = state.copyWith(state: AlarmStateEnum.paused);
+  }
+
+  /// Step two: open the microphone once the user is ready to recite. Only
+  /// valid from [AlarmStateEnum.paused] — the Adhan must already be silent.
+  Future<void> startVoiceCapture() async {
+    if (state.state != AlarmStateEnum.paused) return;
+
     if (!speechService.isInitialized) {
       final bool speechReady = await speechService.initializeSpeech();
       if (!speechReady) {
-        await alarmHardwareService.resumeAdhanPlayback();
         return;
       }
     }
@@ -164,6 +172,15 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
       localePreferenceOrder: arabicLocalePreferenceOrder,
       onRecognized: processSpeechInput,
     );
+  }
+
+  /// Returns to [AlarmStateEnum.ringing] and resumes the Adhan loop if the
+  /// user isn't ready to recite yet after pausing.
+  Future<void> resumeAdhanFromReview() async {
+    if (state.state != AlarmStateEnum.paused) return;
+
+    await alarmHardwareService.resumeAdhanPlayback();
+    state = state.copyWith(state: AlarmStateEnum.ringing);
   }
 
   /// Matches recognized speech against the Arabic Ayah. Once it clears the
@@ -251,8 +268,8 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
 
   /// If the user hasn't reached `completed` within [resumeGracePeriod] of
   /// starting to recite, abandon the current listen session and resume
-  /// the Adhan — dropping back to `ringing` so they can tap to try again
-  /// rather than the alarm silently staying dismissed forever.
+  /// the Adhan — dropping back to `ringing` so they can pause and try
+  /// again rather than the alarm silently staying dismissed forever.
   void _scheduleResumeIfIncomplete() {
     _resumeTimer?.cancel();
     _resumeTimer = Timer(resumeGracePeriod, _handleIncompleteTimeout);
@@ -317,6 +334,7 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
   Future<bool> submitEmergencyTranslationFallback(String typedTranslation) async {
     final ActiveAlarmSession? session = state.session;
     final bool validState = state.state == AlarmStateEnum.ringing ||
+        state.state == AlarmStateEnum.paused ||
         state.state == AlarmStateEnum.reciting ||
         state.state == AlarmStateEnum.recitingTranslation;
     if (!validState || session == null) return false;

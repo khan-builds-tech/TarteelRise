@@ -96,13 +96,44 @@ void main() {
     );
   }
 
+  /// Mirrors the two-step wake-up flow: pause the Adhan, then open the mic.
+  Future<void> beginReciting(AlarmStateNotifier notifier) async {
+    await notifier.pauseAdhanForReview();
+    await notifier.startVoiceCapture();
+  }
+
+  test('pauseAdhanForReview silences the Adhan and reveals the Ayah without opening the mic',
+      () async {
+    final AlarmStateNotifier notifier = buildNotifier();
+    final AlarmModel alarm = buildAlFatihaAlarm();
+
+    notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
+    await notifier.pauseAdhanForReview();
+
+    expect(notifier.state.state, AlarmStateEnum.paused);
+    expect(notifier.state.session?.currentAyahArabic, _alFatihaAyahsOneAndTwo);
+  });
+
+  test('resumeAdhanFromReview returns to ringing and resumes playback', () async {
+    final _FakeAlarmHardwareService fakeHardware = _FakeAlarmHardwareService();
+    final AlarmStateNotifier notifier = buildNotifier(alarmHardwareService: fakeHardware);
+    final AlarmModel alarm = buildAlFatihaAlarm();
+
+    notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
+    await notifier.pauseAdhanForReview();
+    await notifier.resumeAdhanFromReview();
+
+    expect(fakeHardware.resumeAdhanPlaybackCalled, isTrue);
+    expect(notifier.state.state, AlarmStateEnum.ringing);
+  });
+
   test('clearing the Arabic Ayah moves to recitingTranslation, not completed', () async {
     final AlarmStateNotifier notifier = buildNotifier();
     final AlarmModel alarm = buildAlFatihaAlarm();
     await databaseService.saveAlarm(alarm);
 
     notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
-    await notifier.startVoiceCapture();
+    await beginReciting(notifier);
     await notifier.processSpeechInput(_alFatihaAyahsOneAndTwo);
 
     expect(notifier.state.state, AlarmStateEnum.recitingTranslation);
@@ -122,7 +153,7 @@ void main() {
       await databaseService.saveAlarm(alarm);
 
       notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
-      await notifier.startVoiceCapture();
+      await beginReciting(notifier);
       await notifier.processSpeechInput(_alFatihaAyahsOneAndTwo);
       await notifier.processTranslationSpeechInput(_placeholderTranslation);
 
@@ -141,7 +172,7 @@ void main() {
     await databaseService.saveAlarm(alarm);
 
     notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
-    await notifier.startVoiceCapture();
+    await beginReciting(notifier);
     await notifier.processSpeechInput('completely unrelated speech');
 
     expect(notifier.state.state, AlarmStateEnum.reciting);
@@ -158,7 +189,7 @@ void main() {
       await databaseService.saveAlarm(alarm);
 
       notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
-      await notifier.startVoiceCapture();
+      await beginReciting(notifier);
       await notifier.processSpeechInput(_alFatihaAyahsOneAndTwo);
       await notifier.processTranslationSpeechInput('completely unrelated speech');
 
@@ -191,7 +222,7 @@ void main() {
     await databaseService.saveAlarm(alarm);
 
     notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
-    await notifier.startVoiceCapture();
+    await beginReciting(notifier);
     await notifier.processSpeechInput(_alFatihaAyahsOneAndTwo);
     expect(notifier.state.state, AlarmStateEnum.recitingTranslation);
 
@@ -212,7 +243,7 @@ void main() {
         'اهْدِنَا الصِّرَاطَ الْمُسْتَقِيمَ صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ';
 
     notifier.triggerAlarmSession(alarm, ayahsSixAndSeven, _placeholderTranslation);
-    await notifier.startVoiceCapture();
+    await beginReciting(notifier);
     await notifier.processSpeechInput(ayahsSixAndSeven);
     await notifier.processTranslationSpeechInput(_placeholderTranslation);
 
@@ -234,7 +265,7 @@ void main() {
       await databaseService.saveAlarm(alarm);
 
       notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
-      await notifier.startVoiceCapture();
+      await beginReciting(notifier);
       expect(notifier.state.state, AlarmStateEnum.reciting);
 
       // Never recite anything — let the grace period lapse.
@@ -242,8 +273,7 @@ void main() {
 
       expect(fakeHardware.resumeAdhanPlaybackCalled, isTrue);
       expect(notifier.state.state, AlarmStateEnum.ringing);
-      // The session (Ayah/translation text, alarm reference) survives the
-      // timeout so tapping "Tap to Recite" again works normally.
+      // The session survives the timeout so the user can pause and try again.
       expect(notifier.state.session?.currentAyahArabic, _alFatihaAyahsOneAndTwo);
     },
   );
@@ -256,7 +286,7 @@ void main() {
     await databaseService.saveAlarm(alarm);
 
     notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
-    await notifier.startVoiceCapture();
+    await beginReciting(notifier);
     await notifier.processSpeechInput(_alFatihaAyahsOneAndTwo);
     await notifier.processTranslationSpeechInput(_placeholderTranslation);
     expect(notifier.state.state, AlarmStateEnum.completed);
@@ -268,20 +298,20 @@ void main() {
     expect(notifier.state.state, AlarmStateEnum.completed);
   });
 
-  test('rolls back to ringing when speech initialization fails', () async {
-    final _FakeAlarmHardwareService fakeHardware = _FakeAlarmHardwareService();
-
+  test('stays paused when speech initialization fails after the Adhan was silenced',
+      () async {
     final AlarmStateNotifier notifier = buildNotifier(
-      alarmHardwareService: fakeHardware,
       speechService: _UninitializedSpeechService(),
     );
     final AlarmModel alarm = buildAlFatihaAlarm();
 
     notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
+    await notifier.pauseAdhanForReview();
+    expect(notifier.state.state, AlarmStateEnum.paused);
+
     await notifier.startVoiceCapture();
 
-    expect(fakeHardware.resumeAdhanPlaybackCalled, isTrue);
-    expect(notifier.state.state, AlarmStateEnum.ringing);
+    expect(notifier.state.state, AlarmStateEnum.paused);
   });
 }
 

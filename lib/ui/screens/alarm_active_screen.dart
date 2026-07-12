@@ -9,9 +9,9 @@ import '../../providers/alarm_state_provider.dart';
 import '../../providers/dashboard_providers.dart';
 import '../../theme/app_theme.dart';
 
-/// The full-screen wake-up flow: ringing -> reciting -> completed. Layout is
-/// driven entirely by [alarmStateProvider]; this widget owns no state of
-/// its own beyond the pulse/flash animation ticker.
+/// The full-screen wake-up flow: ringing -> paused -> reciting -> completed.
+/// Layout is driven entirely by [alarmStateProvider]; this widget owns no
+/// state of its own beyond the pulse/flash animation ticker.
 class AlarmActiveScreen extends ConsumerStatefulWidget {
   const AlarmActiveScreen({super.key});
 
@@ -43,9 +43,9 @@ class _AlarmActiveScreenState extends ConsumerState<AlarmActiveScreen>
     final AlarmSessionState sessionState = ref.watch(alarmStateProvider);
     final AlarmStateEnum state = sessionState.state;
 
-    // `completed` freezes the wake-up flow visually — no flashing, no
-    // pulsing — everything else keeps the animation ticking.
-    if (state == AlarmStateEnum.completed) {
+    // `completed` and `paused` freeze the alarm flash — calmer while the
+    // user reads the Ayah or reviews their finished recitation.
+    if (state == AlarmStateEnum.completed || state == AlarmStateEnum.paused) {
       if (_pulseController.isAnimating) _pulseController.stop();
     } else if (!_pulseController.isAnimating) {
       _pulseController.repeat(reverse: true);
@@ -60,6 +60,7 @@ class _AlarmActiveScreenState extends ConsumerState<AlarmActiveScreen>
           child: switch (state) {
             AlarmStateEnum.idle => const _IdlePlaceholder(),
             AlarmStateEnum.ringing => _RingingLayout(pulseController: _pulseController),
+            AlarmStateEnum.paused => _PausedLayout(session: sessionState.session),
             AlarmStateEnum.reciting =>
               _RecitingLayout(session: sessionState.session),
             AlarmStateEnum.recitingTranslation =>
@@ -76,11 +77,21 @@ class _AlarmActiveScreenState extends ConsumerState<AlarmActiveScreen>
     switch (state) {
       case AlarmStateEnum.ringing:
         return FloatingActionButton.extended(
+          onPressed: () => ref.read(alarmStateProvider.notifier).pauseAdhanForReview(),
+          extendedPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+          icon: const Icon(Icons.pause, size: 32),
+          label: const Text(
+            'Pause Adhan',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          ),
+        );
+      case AlarmStateEnum.paused:
+        return FloatingActionButton.extended(
           onPressed: () => ref.read(alarmStateProvider.notifier).startVoiceCapture(),
           extendedPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
           icon: const Icon(Icons.mic, size: 32),
           label: const Text(
-            'Tap to Recite',
+            'Start Reciting',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
           ),
         );
@@ -143,6 +154,43 @@ class _RingingLayout extends StatelessWidget {
           child: const _FlashDot(),
         ),
         const Spacer(),
+        const _EmergencyFallbackButton(),
+        const SizedBox(height: 140),
+      ],
+    );
+  }
+}
+
+/// Adhan is silenced; the Ayah is visible so the user can read it before
+/// tapping "Start Reciting" to open the microphone.
+class _PausedLayout extends ConsumerWidget {
+  final ActiveAlarmSession? session;
+
+  const _PausedLayout({required this.session});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ActiveAlarmSession? currentSession = session;
+    if (currentSession == null) {
+      return const Center(child: _MissingSessionMessage());
+    }
+
+    return Column(
+      children: [
+        const SizedBox(height: 16),
+        Text(
+          'Read the Ayah, then tap Start Reciting when ready.',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.bodyLarge,
+        ),
+        const Spacer(),
+        _ArabicAyahCard(arabicText: currentSession.currentAyahArabic),
+        const Spacer(),
+        TextButton.icon(
+          onPressed: () => ref.read(alarmStateProvider.notifier).resumeAdhanFromReview(),
+          icon: const Icon(Icons.volume_up),
+          label: const Text('Resume Adhan'),
+        ),
         const _EmergencyFallbackButton(),
         const SizedBox(height: 140),
       ],

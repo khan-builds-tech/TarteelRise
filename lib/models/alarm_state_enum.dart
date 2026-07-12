@@ -6,6 +6,10 @@ enum AlarmStateEnum {
   /// An alarm has triggered; the Adhan audio loop is playing.
   ringing,
 
+  /// The Adhan has been silenced so the user can read the Ayah in peace;
+  /// the microphone is not active yet.
+  paused,
+
   /// The user has engaged the microphone; speech input is being captured
   /// and validated against the current Ayah via arabic_utils.
   reciting,
