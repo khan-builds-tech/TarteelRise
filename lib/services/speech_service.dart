@@ -10,10 +10,17 @@ const List<String> arabicLocalePreferenceOrder = <String>['ar-SA', 'ar-EG', 'ar'
 /// English locale codes to try, for the translation-recitation phase.
 const List<String> englishLocalePreferenceOrder = <String>['en-US', 'en-GB', 'en'];
 
-/// Wraps the on-device `speech_to_text` engine (Apple `SFSpeechRecognizer` /
-/// Google Speech Services) behind a minimal start/stop surface for
-/// recitation capture. Recognition is forced on-device only — no network
-/// speech APIs are ever used.
+/// Wraps the `speech_to_text` engine (Apple `SFSpeechRecognizer` / Google
+/// Speech Services) behind a minimal start/stop surface for recitation
+/// capture.
+///
+/// Prefers on-device recognition (recitation audio never leaves the
+/// device) but falls back to server-based recognition if the device has
+/// no on-device model for the requested locale — on-device Arabic support
+/// in particular isn't available on many Android devices unless the user
+/// has manually downloaded the offline language pack, and a feature that
+/// silently never works is worse than one that occasionally uses the
+/// network. See [lastAttemptUsedNetwork].
 class SpeechService {
   final SpeechToText _speech = SpeechToText();
 
@@ -26,6 +33,21 @@ class SpeechService {
   /// Whether the native engine is actively capturing audio right now.
   bool get isListening => _speech.isListening;
 
+  /// The native engine's own error code from the most recent failure (e.g.
+  /// `error_language_not_supported`/`error_language_unavailable` when the
+  /// device has no on-device model for the requested locale), regardless
+  /// of whether it happened during [initializeSpeech] or [startListening].
+  /// `null` until the first error. Exposed so callers can surface *why*
+  /// the mic didn't open instead of a generic failure.
+  String? get lastErrorMessage => _lastErrorMessage;
+  String? _lastErrorMessage;
+
+  /// True if the most recent successful [startListening] had to fall back
+  /// to server-based recognition because on-device wasn't available for
+  /// the resolved locale on this device.
+  bool get lastAttemptUsedNetwork => _lastAttemptUsedNetwork;
+  bool _lastAttemptUsedNetwork = false;
+
   /// Sets up the native speech engine. This also triggers the native
   /// microphone + speech-recognition permission prompts (handled internally
   /// by `speech_to_text`), so this must complete before any `listen` call.
@@ -37,7 +59,11 @@ class SpeechService {
     try {
       _isInitialized = await _speech.initialize(
         onError: (SpeechRecognitionError error) {
-          debugPrint('SpeechService recognition error: ${error.errorMsg}');
+          _lastErrorMessage = error.errorMsg;
+          debugPrint(
+            'SpeechService recognition error: ${error.errorMsg} '
+            '(permanent: ${error.permanent})',
+          );
         },
         onStatus: (String status) {
           debugPrint('SpeechService status: $status');
@@ -57,12 +83,16 @@ class SpeechService {
   /// supports (most specific first — e.g. [arabicLocalePreferenceOrder] for
   /// the Ayah, [englishLocalePreferenceOrder] for its translation).
   /// Returns `false` if [initializeSpeech] hasn't succeeded yet or the
-  /// native engine refuses to open the microphone.
+  /// native engine refuses to open the microphone with both on-device and
+  /// network recognition.
   Future<bool> startListening({
     required List<String> localePreferenceOrder,
     required void Function(String recognizedText) onRecognized,
   }) async {
     if (!_isInitialized) return false;
+
+    _lastErrorMessage = null;
+    _lastAttemptUsedNetwork = false;
 
     try {
       if (_speech.isListening) {
@@ -71,32 +101,40 @@ class SpeechService {
 
       final String localeId = await _resolveLocaleId(localePreferenceOrder);
 
-      for (final ListenMode mode in <ListenMode>[
-        ListenMode.dictation,
-        ListenMode.search,
-      ]) {
-        await _speech.listen(
-          onResult: (SpeechRecognitionResult result) {
-            onRecognized(result.recognizedWords);
-          },
-          listenOptions: SpeechListenOptions(
-            localeId: localeId,
-            partialResults: true,
-            cancelOnError: false,
-            onDevice: true,
-            listenMode: mode,
-          ),
-        );
+      // Try on-device first (keeps recitation audio off the network);
+      // only fall back to network recognition if the device genuinely has
+      // no on-device model for this locale.
+      for (final bool onDevice in <bool>[true, false]) {
+        for (final ListenMode mode in <ListenMode>[
+          ListenMode.dictation,
+          ListenMode.search,
+        ]) {
+          await _speech.listen(
+            onResult: (SpeechRecognitionResult result) {
+              onRecognized(result.recognizedWords);
+            },
+            listenOptions: SpeechListenOptions(
+              localeId: localeId,
+              partialResults: true,
+              cancelOnError: false,
+              onDevice: onDevice,
+              listenMode: mode,
+            ),
+          );
 
-        if (_speech.isListening) {
-          debugPrint('SpeechService listening ($localeId, $mode)');
-          return true;
+          if (_speech.isListening) {
+            _lastAttemptUsedNetwork = !onDevice;
+            debugPrint(
+              'SpeechService listening ($localeId, $mode, onDevice: $onDevice)',
+            );
+            return true;
+          }
         }
       }
 
       debugPrint(
         'SpeechService.startListening: engine never entered listening state '
-        'for locale $localeId',
+        'for locale $localeId (lastErrorMessage: $_lastErrorMessage)',
       );
       return false;
     } catch (error, stackTrace) {

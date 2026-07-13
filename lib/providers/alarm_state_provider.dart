@@ -132,8 +132,17 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
   static const String _micPermissionError =
       'Microphone access is required. Allow it in Settings, then tap Start Reciting again.';
 
-  static const String _micStartError =
-      'Could not open the microphone. Tap the mic button to try again, or use Emergency Snooze.';
+  /// Includes the native engine's own error code (e.g.
+  /// `error_language_not_supported` — no on-device model for this locale
+  /// on this device) when available, since "could not open the mic" alone
+  /// isn't actionable — this is what tells us (or the user, reporting
+  /// back) *why*.
+  String _micStartErrorMessage() {
+    const String base =
+        'Could not open the microphone. Tap the mic button to try again, or use Emergency Snooze.';
+    final String? nativeError = speechService.lastErrorMessage;
+    return nativeError == null ? base : '$base\n(engine: $nativeError)';
+  }
 
   void triggerAlarmSession(
     AlarmModel alarm,
@@ -193,7 +202,7 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
       _cancelResumeTimer();
       state = state.copyWith(
         state: AlarmStateEnum.paused,
-        speechErrorMessage: _micStartError,
+        speechErrorMessage: _micStartErrorMessage(),
         isMicActive: false,
       );
       return;
@@ -230,7 +239,7 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     state = state.copyWith(
       isMicActive: listening,
       clearSpeechError: listening,
-      speechErrorMessage: listening ? null : _micStartError,
+      speechErrorMessage: listening ? null : _micStartErrorMessage(),
     );
   }
 
@@ -301,7 +310,7 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     state = state.copyWith(
       isMicActive: listening,
       clearSpeechError: listening,
-      speechErrorMessage: listening ? null : _micStartError,
+      speechErrorMessage: listening ? null : _micStartErrorMessage(),
     );
   }
 

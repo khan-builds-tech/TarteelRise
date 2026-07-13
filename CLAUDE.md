@@ -49,8 +49,12 @@ There is no CI/Codemagic config yet — Phase 4 of `tarteel_rise_tasks.md` sets 
   `flutter_alarmkit` for iOS AlarmKit specifically (configured via `ios/Runner/Info.plist`).
 - **Audio:** `just_audio` loops the local `assets/audio/adhan.mp3` asset and must handle audio
   ducking when another app is playing media.
-- **Speech pipeline:** `speech_to_text`, wired to on-device engines only (Apple `SFSpeechRecognizer`
-  on iOS, Google Speech Services on Android). **No external/network speech APIs are permitted.**
+- **Speech pipeline:** `speech_to_text`, preferring on-device engines (Apple `SFSpeechRecognizer`
+  on iOS, Google Speech Services on Android) but falling back to server-based recognition if the
+  device has no on-device model for the locale — on-device Arabic isn't available on many Android
+  devices by default. See `SpeechService.startListening`/`lastAttemptUsedNetwork`. This was
+  originally on-device-only; relaxed by explicit product decision after on-device-only left the
+  mic silently non-functional on devices without the offline Arabic language pack installed.
 - **Arabic text normalization:** all recognized/reference text must be normalized before
   comparison — strip Tashkeel diacritics (`ً`–`ْ`) and fold Alef variants (`إأآ` → `ا`)
   before whitespace/case normalization. This lives in `utils/arabic_utils.dart` per the spec's
