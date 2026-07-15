@@ -15,6 +15,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.BLUETOOTH"/>
     <!-- Required by `speech_to_text` for on-device recitation capture. The
          plugin does not declare this in its own manifest merge. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -54,7 +56,9 @@
         <!-- Shows a warning notification if the user kills the app while an
              alarm is scheduled (the alarm won't ring if the app is killed
              before it fires on some devices). -->
-        <service android:name="com.gdelataillade.alarm.services.NotificationOnKillService" />
+        <service 
+    android:name="com.gdelataillade.alarm.services.NotificationOnKillService"
+    android:foregroundServiceType="shortService" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
