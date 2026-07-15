@@ -56,9 +56,14 @@
         <!-- Shows a warning notification if the user kills the app while an
              alarm is scheduled (the alarm won't ring if the app is killed
              before it fires on some devices). -->
+        <service
+        android:name="com.gdelataillade.alarm.services.AlarmService"
+        android:foregroundServiceType="mediaPlayback"
+        android:exported="false" />
+        
         <service 
     android:name="com.gdelataillade.alarm.services.NotificationOnKillService"
-    android:foregroundServiceType="shortService" />
+    android:foregroundServiceType="shortService" android:exported="false" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

@@ -5,23 +5,25 @@ publish_to: 'none' # Prevents accidental publishing to pub.dev
 version: 1.0.0+1
 
 environment:
-  sdk: '^3.12.2' # Uses a highly stable, performance-optimized Dart SDK context
+  sdk: '>=3.12.2 <4.0.0' # Uses a highly stable, performance-optimized Dart SDK context
 
 dependencies:
   flutter:
     sdk: flutter
 
   # --- HARDWARE & DEVICE INTEGRATION ---
-  # Native background execution handles lock screens beautifully
+  # Native background execution handles lock screens beautifully on both iOS and Android
   alarm: ^5.5.0
-  # Taps directly into Apple's native iOS AlarmKit APIs
-  flutter_alarmkit: ^0.3.1
   # Deep background control for playing looping local files like the Adhan
   just_audio: ^0.10.6
+  # Essential for requesting sensitive runtime permissions (Mic, Exact Alarms, Notifications)
+  permission_handler: ^11.3.1
   
   # --- COGNITIVE CORE: SPEECH PIPELINE ---
-  # Taps into local iOS Apple Speech infrastructure cleanly without network latency
+  # Taps into local system Speech infrastructure cleanly without network latency
   speech_to_text: ^7.4.0
+  # Provides reliable ISO/locale parsing for Arabic (ar-SA, ar-EG) and English strings
+  intl: ^0.19.0
 
   # --- LOCAL & OFFLINE DATA SYSTEM ---
   # Lightning-fast local key-value store. Essential for reliable morning routines offline
