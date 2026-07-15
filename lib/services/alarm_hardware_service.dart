@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:alarm/alarm.dart';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../models/alarm_model.dart';
 
@@ -64,6 +65,24 @@ class AlarmHardwareService {
     }
   }
 
+  /// Prompts the user to exempt the app from Android's battery
+  /// optimizations — without it, the OS can still defer or kill the
+  /// alarm's background work on some OEM skins even with the foreground
+  /// service types declared. No-op on iOS, where this permission doesn't
+  /// exist. Fails safe: a denied/unavailable permission just leaves the
+  /// exemption unset rather than throwing.
+  Future<void> requestBatteryOptimizationExemption() async {
+    try {
+      if (await Permission.ignoreBatteryOptimizations.isDenied) {
+        await Permission.ignoreBatteryOptimizations.request();
+      }
+    } catch (error, stackTrace) {
+      debugPrint(
+        'AlarmHardwareService.requestBatteryOptimizationExemption failed: $error\n$stackTrace',
+      );
+    }
+  }
+
   /// Translates [alarmSettings] (our Hive [AlarmModel]) into a native
   /// `alarm` package `AlarmSettings` and schedules it: the Adhan asset
   /// loops indefinitely, volume is pinned to maximum and enforced, and a
@@ -90,6 +109,17 @@ class AlarmHardwareService {
         dateTime: triggerTime,
         assetAudioPath: adhanAssetPath,
         loopAudio: true,
+        // Shows a rescue notification if the app process is killed while
+        // this alarm is still pending, and lets the ringing screen turn the
+        // device on over the lock screen even if the main activity was
+        // dead when the native alarm fired.
+        warningNotificationOnKill: true,
+        androidFullScreenIntent: true,
+        // Defaults to `true` in the `alarm` package, which stops the native
+        // alarm the moment Android tears down the app's task — defeating
+        // the whole point of surviving a swipe-away kill. Must be `false`
+        // so the alarm keeps ringing from its own foreground service.
+        androidStopAlarmOnTermination: false,
         volumeSettings: const VolumeSettings.fixed(
           volume: 1.0,
           volumeEnforced: true,

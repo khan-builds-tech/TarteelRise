@@ -20,6 +20,10 @@
     <!-- Required by `speech_to_text` for on-device recitation capture. The
          plugin does not declare this in its own manifest merge. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Lets us prompt the user to exempt the app from Android's battery
+         optimizations, so the OS doesn't kill the alarm's background work
+         to save power. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
 
     <application
         android:label="Tarteel Rise"

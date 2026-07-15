@@ -40,6 +40,7 @@ Future<void> main() async {
       container.read(alarmHardwareServiceProvider);
   await alarmHardwareService.initializeHardware();
   await alarmHardwareService.rescheduleAllEnabledAlarms(databaseService.getAllAlarms());
+  await alarmHardwareService.requestBatteryOptimizationExemption();
 
   // Pre-warm the on-device speech engine so the first "Tap to Recite" during
   // a wake-up doesn't stall on a cold permission/init handshake.
