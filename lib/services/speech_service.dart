@@ -20,8 +20,10 @@ class SpeechService {
   bool get lastAttemptUsedNetwork => _lastAttemptUsedNetwork;
   bool _lastAttemptUsedNetwork = false;
 
-  // Global callbacks to bridge the async native events back to the active listener
   void Function(String)? _activeResultCallback;
+  
+  // Exposes current speech volume changes to drive visual wave components in the UI
+  void Function(double dB)? onSoundLevelChanged;
 
   Future<bool> initializeSpeech() async {
     try {
@@ -30,7 +32,6 @@ class SpeechService {
           _lastErrorMessage = error.errorMsg;
           debugPrint('SpeechService recognition error: ${error.errorMsg} (permanent: ${error.permanent})');
           
-          // CRITICAL: If native listening fails after starting, stop state tracking
           if (error.permanent) {
             _activeResultCallback = null;
           }
@@ -47,11 +48,6 @@ class SpeechService {
     }
   }
 
-  /// Activates microphone capture.
-  /// 
-  /// NOTE: Rather than guessing via a loop, we configure optimal defaults.
-  /// On Android, setting `onDevice: false` will seamlessly use on-device if available,
-  /// or cloud fallback automatically via Google Speech Services without crashing.
   Future<bool> startListening({
     required List<String> localePreferenceOrder,
     required void Function(String recognizedText) onRecognized,
@@ -59,52 +55,52 @@ class SpeechService {
     if (!_isInitialized) return false;
 
     _lastErrorMessage = null;
-    // We cannot explicitly guarantee on-device status natively without deep OS checks,
-    // so we track intent or rely on defaults.
     _lastAttemptUsedNetwork = true; 
 
     try {
       if (_speech.isListening) {
         await _speech.stop();
-        // Give the native channel a brief moment to cycle down
-        await Future<void>.delayed(const Duration(milliseconds: 200));
+        await Future<void>.delayed(const Duration(milliseconds: 250)); // Slightly expanded cooldown
       }
 
       final String localeId = await _resolveLocaleId(localePreferenceOrder);
       _activeResultCallback = onRecognized;
 
-      // Use a single, highly compatible configuration request.
-      // Trying to stack loops here forces race conditions.
       await _speech.listen(
         onResult: (SpeechRecognitionResult result) {
           if (_activeResultCallback != null) {
             _activeResultCallback!(result.recognizedWords);
           }
         },
+        // Captures sound fluctuations (dB changes) during recitation
+        onSoundLevelChange: (double level) {
+          if (onSoundLevelChanged != null) {
+            onSoundLevelChanged!(level);
+          }
+        },
         listenOptions: SpeechListenOptions(
           localeId: localeId,
           partialResults: true,
           cancelOnError: false,
-          // Setting onDevice to false allows Google Services to automatically
-          // handle the offline-to-cloud fallback smoothly on Android.
           onDevice: false, 
           listenMode: ListenMode.dictation,
         ),
       );
 
-      // Allow native engine a short window to flip the switch
+      // Expanded Retry Window: 15 retries x 100ms = 1.5 seconds maximum timeout.
+      // This absorbs native scheduling latency on low-end hardware waking from Doze mode.
       int retries = 0;
-      while (!_speech.isListening && retries < 5) {
+      while (!_speech.isListening && retries < 15) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
         retries++;
       }
 
       if (_speech.isListening) {
-        debugPrint('SpeechService successfully listening ($localeId)');
+        debugPrint('SpeechService successfully listening ($localeId) after ${retries * 100}ms');
         return true;
       }
 
-      debugPrint('SpeechService failed to enter listening state.');
+      debugPrint('SpeechService failed to enter listening state within timeout limits.');
       return false;
     } catch (error, stackTrace) {
       debugPrint('SpeechService.startListening failed: $error\n$stackTrace');
@@ -122,12 +118,10 @@ class SpeechService {
     }
   }
 
-  /// Normalizes and resolves locale format variations (e.g., ar_SA vs ar-SA)
   Future<String> _resolveLocaleId(List<String> preferenceOrder) async {
     try {
       final List<LocaleName> availableLocales = await _speech.locales();
       
-      // Normalize system tags to lowercase with hyphens for bulletproof matching
       final Set<String> availableIds = availableLocales
           .map((LocaleName l) => l.localeId.toLowerCase().replaceAll('_', '-'))
           .toSet();
@@ -135,7 +129,6 @@ class SpeechService {
       for (final String candidate in preferenceOrder) {
         final String normalizedCandidate = candidate.toLowerCase().replaceAll('_', '-');
         if (availableIds.contains(normalizedCandidate)) {
-          // Return the original matching string from the system, not our normalized copy
           return availableLocales
               .firstWhere((LocaleName l) => l.localeId.toLowerCase().replaceAll('_', '-') == normalizedCandidate)
               .localeId;
