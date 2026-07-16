@@ -8,7 +8,6 @@ import '../../models/user_stats_model.dart';
 import '../../providers/alarm_state_provider.dart';
 import '../../providers/dashboard_providers.dart';
 import '../../theme/app_theme.dart';
-import 'alarm_active_screen.dart';
 import 'alarm_create_screen.dart';
 
 /// Home screen: shows the user's saved alarms, a Surah picker, and their
@@ -72,12 +71,16 @@ class AlarmDashboardScreen extends ConsumerWidget {
   }
 }
 
-/// TEMPORARY — DEBUG ONLY. Manually pushes [AlarmActiveScreen] so the
-/// wake-up flow can be tested without waiting for a real scheduled alarm
-/// or the Quran verse database that would normally drive it. Gated on
-/// [kDebugMode] so the Dart compiler strips this out of release builds
-/// entirely. Remove once real alarm scheduling triggers the screen for
-/// real via [AlarmRingingListener].
+/// TEMPORARY — DEBUG ONLY. Seeds a preview session so the wake-up flow can
+/// be tested without waiting for a real scheduled alarm or the Quran verse
+/// database that would normally drive it. Gated on [kDebugMode] so the Dart
+/// compiler strips this out of release builds entirely. Remove once real
+/// alarm scheduling triggers the screen for real via [AlarmRingingListener].
+///
+/// Deliberately does NOT push `AlarmActiveScreen` itself — seeding the
+/// session flips [alarmStateProvider] away from `idle`, which
+/// `AppNavigationWrapper` (see `main.dart`) reacts to on its own. Pushing
+/// here too would double up the navigation stack.
 class _TestActiveAlarmUiButton extends ConsumerWidget {
   const _TestActiveAlarmUiButton();
 
@@ -86,20 +89,7 @@ class _TestActiveAlarmUiButton extends ConsumerWidget {
     return SizedBox(
       width: double.infinity,
       child: OutlinedButton.icon(
-        onPressed: () async {
-          ref.read(alarmStateProvider.notifier).seedPreviewSessionForDebug();
-          await Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => const AlarmActiveScreen(),
-            ),
-          );
-          // The streak may have changed while the test screen was up (a
-          // completed recitation or an Emergency Snooze) — both providers
-          // are long-lived singletons that only re-read Hive when
-          // explicitly told to.
-          ref.read(userStatsProvider.notifier).refresh();
-          ref.read(alarmListProvider.notifier).refresh();
-        },
+        onPressed: () => ref.read(alarmStateProvider.notifier).seedPreviewSessionForDebug(),
         icon: const Icon(Icons.bug_report_outlined),
         label: const Text('Test Active Alarm UI'),
       ),

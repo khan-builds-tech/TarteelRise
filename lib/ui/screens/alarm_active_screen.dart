@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../models/active_alarm_session.dart';
 import '../../models/alarm_state_enum.dart';
 import '../../providers/alarm_state_provider.dart';
-import '../../providers/dashboard_providers.dart';
 import '../../theme/app_theme.dart';
 
 /// The full-screen wake-up flow: ringing -> paused -> reciting -> completed.
@@ -51,32 +50,43 @@ class _AlarmActiveScreenState extends ConsumerState<AlarmActiveScreen>
       _pulseController.repeat(reverse: true);
     }
 
-    return Scaffold(
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
-      floatingActionButton: _buildFab(state, sessionState),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
-          child: switch (state) {
-            AlarmStateEnum.idle => const _IdlePlaceholder(),
-            AlarmStateEnum.ringing => _RingingLayout(pulseController: _pulseController),
-            AlarmStateEnum.paused => _PausedLayout(
-                session: sessionState.session,
-                speechErrorMessage: sessionState.speechErrorMessage,
-              ),
-            AlarmStateEnum.reciting => _RecitingLayout(
-                session: sessionState.session,
-                isMicActive: sessionState.isMicActive,
-                speechErrorMessage: sessionState.speechErrorMessage,
-              ),
-            AlarmStateEnum.recitingTranslation => _RecitingTranslationLayout(
-                session: sessionState.session,
-                isMicActive: sessionState.isMicActive,
-                speechErrorMessage: sessionState.speechErrorMessage,
-              ),
-            AlarmStateEnum.completed =>
-              _CompletedLayout(session: sessionState.session),
-          },
+    // Blocks the system back gesture/button for every state except `idle`
+    // (this screen's own fallback placeholder — never reached in the real
+    // flow, since `AppNavigationWrapper` only routes here on a non-idle
+    // transition, but still safely dismissible if it ever is). Without
+    // this, a back-press while `AppNavigationWrapper` has hard-replaced the
+    // stack with only this route would exit the app instead of respecting
+    // the recitation requirement — same escape hatch the emergency-fallback
+    // dialog's typed translation is designed to close.
+    return PopScope(
+      canPop: state == AlarmStateEnum.idle,
+      child: Scaffold(
+        floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+        floatingActionButton: _buildFab(state, sessionState),
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+            child: switch (state) {
+              AlarmStateEnum.idle => const _IdlePlaceholder(),
+              AlarmStateEnum.ringing => _RingingLayout(pulseController: _pulseController),
+              AlarmStateEnum.paused => _PausedLayout(
+                  session: sessionState.session,
+                  speechErrorMessage: sessionState.speechErrorMessage,
+                ),
+              AlarmStateEnum.reciting => _RecitingLayout(
+                  session: sessionState.session,
+                  isMicActive: sessionState.isMicActive,
+                  speechErrorMessage: sessionState.speechErrorMessage,
+                ),
+              AlarmStateEnum.recitingTranslation => _RecitingTranslationLayout(
+                  session: sessionState.session,
+                  isMicActive: sessionState.isMicActive,
+                  speechErrorMessage: sessionState.speechErrorMessage,
+                ),
+              AlarmStateEnum.completed =>
+                _CompletedLayout(session: sessionState.session),
+            },
+          ),
         ),
       ),
     );
@@ -552,17 +562,12 @@ class _MatchProgressTracker extends StatelessWidget {
   }
 }
 
-/// Resets the state machine to `idle` and, if this screen was pushed (the
-/// normal case — see `main.dart`'s ringing listener), pops back to
-/// whatever was showing underneath rather than stranding the user on the
-/// bare "No active alarm." placeholder.
-void _finishAndReturnToDashboard(BuildContext context, WidgetRef ref) {
+/// Resets the state machine to `idle`. Navigation back to the dashboard —
+/// and refreshing the streak/alarm-list providers once there — is handled
+/// centrally by `AppNavigationWrapper` (see `main.dart`) reacting to that
+/// state change, not by this screen popping itself.
+void _finishAndReturnToDashboard(WidgetRef ref) {
   ref.read(alarmStateProvider.notifier).resetToIdle();
-  ref.read(userStatsProvider.notifier).refresh();
-  ref.read(alarmListProvider.notifier).refresh();
-  if (Navigator.of(context).canPop()) {
-    Navigator.of(context).pop();
-  }
 }
 
 class _CompletedLayout extends ConsumerWidget {
@@ -596,7 +601,7 @@ class _CompletedLayout extends ConsumerWidget {
         ),
         const Spacer(),
         _StartYourDayButton(
-          onPressed: () => _finishAndReturnToDashboard(context, ref),
+          onPressed: () => _finishAndReturnToDashboard(ref),
         ),
         const SizedBox(height: 16),
       ],

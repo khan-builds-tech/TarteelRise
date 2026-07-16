@@ -82,8 +82,10 @@ class SpeechService {
           localeId: localeId,
           partialResults: true,
           cancelOnError: false,
-          onDevice: false, 
+          onDevice: false,
           listenMode: ListenMode.dictation,
+          listenFor: const Duration(minutes: 5),
+          pauseFor: const Duration(seconds: 20),
         ),
       );
 

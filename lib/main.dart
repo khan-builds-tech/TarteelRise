@@ -13,17 +13,6 @@ import 'theme/app_theme.dart';
 import 'ui/screens/alarm_active_screen.dart';
 import 'ui/screens/alarm_dashboard_screen.dart';
 
-/// App-wide navigator access so a real alarm ringing (which can happen
-/// while any screen is on top, or while the app is merely backgrounded)
-/// can push [AlarmActiveScreen] itself, rather than relying on the state
-/// machine's `ringing` transition to somehow be visible on its own.
-final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
-
-/// True while [AlarmActiveScreen] is the pushed, on-screen route — guards
-/// against pushing a second copy if `ringing` fires again (or the ringing
-/// stream re-emits) while it's already showing.
-bool _isActiveAlarmScreenShowing = false;
-
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -52,29 +41,6 @@ Future<void> main() async {
     resolveAyahContent: _resolveAyahContent,
   );
   ringingListener.start();
-
-  // The one and only place that reacts to the state machine entering
-  // `ringing` by actually SHOWING the wake-up screen. Without this, a real
-  // alarm firing only ever changes background Riverpod state — the Adhan
-  // plays natively regardless, but there is no way to reach the mic
-  // button or stop it.
-  container.listen<AlarmSessionState>(
-    alarmStateProvider,
-    (previous, next) {
-      final bool enteringRinging = next.state == AlarmStateEnum.ringing &&
-          previous?.state != AlarmStateEnum.ringing;
-      if (enteringRinging && !_isActiveAlarmScreenShowing) {
-        _isActiveAlarmScreenShowing = true;
-        navigatorKey.currentState
-            ?.push(MaterialPageRoute<void>(builder: (_) => const AlarmActiveScreen()))
-            .then((_) {
-          _isActiveAlarmScreenShowing = false;
-          container.read(userStatsProvider.notifier).refresh();
-          container.read(alarmListProvider.notifier).refresh();
-        });
-      }
-    },
-  );
 
   runApp(
     UncontrolledProviderScope(
@@ -106,11 +72,57 @@ class TarteelRiseApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      navigatorKey: navigatorKey,
       title: 'Tarteel Rise',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
-      home: const AlarmDashboardScreen(),
+      home: const AppNavigationWrapper(),
     );
+  }
+}
+
+/// Single source of truth for whole-app routing driven by
+/// [alarmStateProvider]. `ref.listen` here — rather than a global
+/// `NavigatorState` key — means routing reacts through the widget actually
+/// mounted in the tree, so there's no window where a state transition
+/// fires before the app's `Navigator` exists to receive it.
+///
+/// Whenever the state machine leaves `idle` (a real alarm ringing while the
+/// app sits on the Dashboard, inside a pushed screen, or newly resumed from
+/// the background — all indistinguishable to this listener, since it only
+/// watches the state, never how the app got there) this hard-replaces the
+/// *entire* navigation stack with [AlarmActiveScreen] via
+/// `pushAndRemoveUntil`. That's deliberate, not just a stronger `push`:
+/// leaving a stale Dashboard/Create-alarm screen underneath would let the
+/// system back button pop straight past the recitation requirement. The
+/// reverse transition (session finishes or resets) hard-replaces back to a
+/// fresh [AlarmDashboardScreen] the same way, so the stack never
+/// accumulates alarm-session routes across repeated wake-ups.
+class AppNavigationWrapper extends ConsumerWidget {
+  const AppNavigationWrapper({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.listen<AlarmStateEnum>(
+      alarmStateProvider.select((AlarmSessionState s) => s.state),
+      (AlarmStateEnum? previous, AlarmStateEnum next) {
+        final bool wasIdle = previous == null || previous == AlarmStateEnum.idle;
+        final bool isIdle = next == AlarmStateEnum.idle;
+        if (wasIdle == isIdle) return;
+
+        if (isIdle) {
+          ref.read(userStatsProvider.notifier).refresh();
+          ref.read(alarmListProvider.notifier).refresh();
+        }
+
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute<void>(
+            builder: (_) =>
+                isIdle ? const AlarmDashboardScreen() : const AlarmActiveScreen(),
+          ),
+          (Route<void> route) => false,
+        );
+      },
+    );
+    return const AlarmDashboardScreen();
   }
 }
