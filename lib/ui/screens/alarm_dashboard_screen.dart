@@ -156,46 +156,95 @@ class _EmptyAlarmsMessage extends StatelessWidget {
   }
 }
 
-class _AlarmCard extends StatelessWidget {
+/// Tapping the card opens [AlarmCreateScreen] pre-filled for editing; the
+/// trailing delete button cancels the alarm's native schedule and removes
+/// it from Hive after a confirmation dialog, since deleting is not easily
+/// undone.
+class _AlarmCard extends ConsumerWidget {
   final AlarmModel alarm;
 
   const _AlarmCard({required this.alarm});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final String time =
         '${alarm.hour.toString().padLeft(2, '0')}:${alarm.minute.toString().padLeft(2, '0')}';
 
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(time, style: Theme.of(context).textTheme.headlineMedium),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${_formatDaysOfWeek(alarm.daysOfWeek)} · '
-                    '${alarm.numberOfAyahs} Ayah${alarm.numberOfAyahs == 1 ? '' : 's'} · '
-                    '${_capitalize(alarm.difficultyLevel)}',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                ],
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () async {
+          await Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => AlarmCreateScreen(existingAlarm: alarm),
+            ),
+          );
+          ref.read(alarmListProvider.notifier).refresh();
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(time, style: Theme.of(context).textTheme.headlineMedium),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${_formatDaysOfWeek(alarm.daysOfWeek)} · '
+                      '${alarm.numberOfAyahs} Ayah${alarm.numberOfAyahs == 1 ? '' : 's'} · '
+                      '${_capitalize(alarm.difficultyLevel)}',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ],
+                ),
               ),
-            ),
-            Icon(
-              alarm.isEnabled ? Icons.alarm_on : Icons.alarm_off,
-              color: alarm.isEnabled
-                  ? AppColors.accentEmerald
-                  : Theme.of(context).textTheme.bodyMedium?.color,
-            ),
-          ],
+              Icon(
+                alarm.isEnabled ? Icons.alarm_on : Icons.alarm_off,
+                color: alarm.isEnabled
+                    ? AppColors.accentEmerald
+                    : Theme.of(context).textTheme.bodyMedium?.color,
+              ),
+              IconButton(
+                tooltip: 'Delete alarm',
+                icon: const Icon(Icons.delete_outline),
+                onPressed: () => _confirmAndDelete(context, ref),
+              ),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  Future<void> _confirmAndDelete(BuildContext context, WidgetRef ref) async {
+    final bool confirmed = await showDialog<bool>(
+          context: context,
+          builder: (BuildContext dialogContext) => AlertDialog(
+            title: const Text('Delete Alarm?'),
+            content: const Text(
+              "This alarm won't wake you up anymore. This can't be undone.",
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!confirmed) return;
+
+    await ref.read(alarmHardwareServiceProvider).cancelScheduledAlarm(alarm.id);
+    await ref.read(databaseServiceProvider).deleteAlarm(alarm.id);
+    ref.read(alarmListProvider.notifier).refresh();
   }
 
   static String _formatDaysOfWeek(List<int> daysOfWeek) {

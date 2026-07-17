@@ -26,6 +26,12 @@ typedef AyahContentResolver = Future<AyahContent> Function(AlarmModel alarm);
 /// finds the matching [AlarmModel], resolves its Ayah content, and drives
 /// [AlarmStateNotifier.triggerAlarmSession] — so the rest of the app reacts
 /// through the state machine rather than the native alarm APIs directly.
+///
+/// Also the entry point for a Dead Man's Switch alarm firing (see
+/// `AlarmStateNotifier.startVoiceCapture`/`scheduleDeadMansSwitchAlarm`):
+/// that's a *second* native alarm scheduled under its own id, so it flows
+/// through this exact same stream and needs its own id-matching pass to
+/// route to [AlarmStateNotifier.handleDeadMansSwitchFired] instead.
 class AlarmRingingListener {
   final DatabaseService databaseService;
   final AlarmStateNotifier alarmStateNotifier;
@@ -47,21 +53,45 @@ class AlarmRingingListener {
 
   Future<void> _handleRingingAlarms(AlarmSet ringingAlarms) async {
     for (final AlarmSettings ringingAlarm in ringingAlarms.alarms) {
-      final AlarmModel? matchedAlarm = _findMatchingAlarm(ringingAlarm.id);
-      if (matchedAlarm == null) continue;
+      final AlarmModel? primaryMatch = _findMatchingAlarm(
+        ringingAlarm.id,
+        AlarmHardwareService.nativeAlarmIdFor,
+      );
+      if (primaryMatch != null) {
+        final AyahContent content = await resolveAyahContent(primaryMatch);
+        alarmStateNotifier.triggerAlarmSession(
+          primaryMatch,
+          content.arabicText,
+          content.translation,
+        );
+        continue;
+      }
 
-      final AyahContent content = await resolveAyahContent(matchedAlarm);
-      alarmStateNotifier.triggerAlarmSession(
-        matchedAlarm,
+      // Not the primary wake alarm — check whether this is one alarm's
+      // Dead Man's Switch firing instead (the grace-period safety net
+      // armed by `AlarmStateNotifier.startVoiceCapture`). It has its own,
+      // never-overlapping id space, so an alarm can never match both.
+      final AlarmModel? fallbackMatch = _findMatchingAlarm(
+        ringingAlarm.id,
+        AlarmHardwareService.nativeFallbackAlarmIdFor,
+      );
+      if (fallbackMatch == null) continue;
+
+      final AyahContent content = await resolveAyahContent(fallbackMatch);
+      alarmStateNotifier.handleDeadMansSwitchFired(
+        fallbackMatch,
         content.arabicText,
         content.translation,
       );
     }
   }
 
-  AlarmModel? _findMatchingAlarm(int nativeAlarmId) {
+  AlarmModel? _findMatchingAlarm(
+    int nativeAlarmId,
+    int Function(String alarmModelId) idMapper,
+  ) {
     for (final AlarmModel alarm in databaseService.getAllAlarms()) {
-      if (AlarmHardwareService.nativeAlarmIdFor(alarm.id) == nativeAlarmId) {
+      if (idMapper(alarm.id) == nativeAlarmId) {
         return alarm;
       }
     }

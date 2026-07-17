@@ -193,6 +193,17 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     );
     _scheduleResumeIfIncomplete();
 
+    // Belt-and-suspenders with `_scheduleResumeIfIncomplete`: that Dart
+    // `Timer` only fires if this isolate is still alive and scheduled in
+    // time when the grace period lapses — not guaranteed if the app is
+    // killed, or merely throttled by the OS while backgrounded. This native
+    // alarm is the Dead Man's Switch that fires regardless. Best-effort and
+    // unawaited — starting the mic can't stall on a native scheduling call.
+    final ActiveAlarmSession? armingSession = state.session;
+    if (armingSession != null) {
+      unawaited(alarmHardwareService.scheduleDeadMansSwitchAlarm(armingSession.activeAlarm));
+    }
+
     final bool listening = await speechService.startListening(
       localePreferenceOrder: arabicLocalePreferenceOrder,
       onRecognized: processSpeechInput,
@@ -205,6 +216,12 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
         speechErrorMessage: _micStartErrorMessage(),
         isMicActive: false,
       );
+      // The mic never actually opened, so there's no recitation grace
+      // period running — disarm the switch armed above, or it would fire
+      // a minute later against a session that's just sitting in `paused`.
+      if (armingSession != null) {
+        unawaited(alarmHardwareService.cancelDeadMansSwitchAlarm(armingSession.activeAlarm.id));
+      }
       return;
     }
 
@@ -368,12 +385,63 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
   }
 
   Future<void> _handleIncompleteTimeout() async {
+    final ActiveAlarmSession? session = state.session;
     if (state.state == AlarmStateEnum.completed || state.state == AlarmStateEnum.idle) {
       return;
     }
 
     await speechService.stopListening();
     await alarmHardwareService.resumeAdhanPlayback();
+    state = state.copyWith(state: AlarmStateEnum.ringing);
+
+    // This Dart timer firing on schedule means the isolate was alive and
+    // responsive — the whole point of the native Dead Man's Switch armed
+    // in `startVoiceCapture` is to cover the case where it *wasn't*.
+    // Disarm it now so it doesn't also fire moments later and interrupt
+    // this already-recovered session with a second, redundant wake-up.
+    if (session != null) {
+      await alarmHardwareService.cancelDeadMansSwitchAlarm(session.activeAlarm.id);
+    }
+  }
+
+  /// Reacts to the native Dead Man's Switch itself firing (see
+  /// `startVoiceCapture`/`AlarmHardwareService.scheduleDeadMansSwitchAlarm`)
+  /// — meaning the 1-minute recitation grace period lapsed *without*
+  /// [_handleIncompleteTimeout] catching it first, which only happens if
+  /// this isolate died or was throttled sometime after the switch was
+  /// armed. By the time this runs, the native alarm has already
+  /// independently resumed the Adhan and, via its full-screen intent,
+  /// forced the lock-screen wake-up UI back into focus — native, not
+  /// something this method needs to do.
+  ///
+  /// Two possible situations reach here, and the existing `idle`-only
+  /// guard on [triggerAlarmSession] is what tells them apart:
+  ///  - The app is still alive (a slow/throttled isolate, not a kill): the
+  ///    in-memory session survived, so `state.state` is whatever
+  ///    mid-recitation phase it was in. This drops it back to `ringing`,
+  ///    same as [_handleIncompleteTimeout] — but deliberately does NOT
+  ///    call `resumeAdhanPlayback` too, since the native alarm that just
+  ///    fired is already playing the Adhan; a second local player would
+  ///    double the audio.
+  ///  - The app was actually killed: this is a fresh [AlarmStateNotifier],
+  ///    defaulting to `idle`, with no session left to reconcile — so this
+  ///    is functionally a normal ring, and hands off to
+  ///    [triggerAlarmSession] to show the wake-up screen from scratch for
+  ///    the same alarm and Ayah.
+  void handleDeadMansSwitchFired(
+    AlarmModel alarm,
+    String arabicText,
+    String translation,
+  ) {
+    if (state.state == AlarmStateEnum.idle) {
+      triggerAlarmSession(alarm, arabicText, translation);
+      return;
+    }
+
+    if (state.state == AlarmStateEnum.completed) return;
+
+    _cancelResumeTimer();
+    speechService.stopListening();
     state = state.copyWith(state: AlarmStateEnum.ringing);
   }
 
@@ -446,18 +514,27 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
   /// Once the flow is fully complete, the mic is no longer needed and the
   /// ringing (or resumed) Adhan must be killed immediately — both wrapped
   /// so a hardware failure here can't strand the app on a silenced-looking
-  /// but still-ringing alarm.
+  /// but still-ringing alarm. Also disarms the Dead Man's Switch armed in
+  /// [startVoiceCapture] — a validated recitation or Emergency Snooze
+  /// reaching here means the session is genuinely over, so the safety-net
+  /// alarm must be cancelled "along with the parent alarm session" rather
+  /// than fire a minute later against a session that no longer exists.
   Future<void> _silenceAlarmOnCompletion(AlarmModel alarm) async {
     await speechService.stopListening();
     await alarmHardwareService.stopActiveAlarmSound(
       AlarmHardwareService.nativeAlarmIdFor(alarm.id),
     );
+    await alarmHardwareService.cancelDeadMansSwitchAlarm(alarm.id);
   }
 
   void resetToIdle() {
+    final ActiveAlarmSession? session = state.session;
     _cancelResumeTimer();
     speechService.stopListening();
     state = const AlarmSessionState();
+    if (session != null) {
+      unawaited(alarmHardwareService.cancelDeadMansSwitchAlarm(session.activeAlarm.id));
+    }
   }
 
   /// Lenient equality for the typed-translation fallback: case, leading/

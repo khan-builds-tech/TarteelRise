@@ -5,7 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:tarteel_rise/main.dart';
+import 'package:tarteel_rise/models/alarm_model.dart';
 import 'package:tarteel_rise/providers/alarm_state_provider.dart';
+import 'package:tarteel_rise/providers/dashboard_providers.dart';
 import 'package:tarteel_rise/services/alarm_hardware_service.dart';
 
 void main() {
@@ -109,6 +111,104 @@ void main() {
       expect(find.text('No alarms yet.'), findsNothing);
       expect(find.textContaining('Every day'), findsOneWidget);
       expect(find.textContaining('3 Ayahs'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'tapping an existing alarm opens edit mode and updates it in place',
+    (WidgetTester tester) async {
+      await container.read(databaseServiceProvider).saveAlarm(
+            AlarmModel(
+              id: 'edit-test-alarm',
+              hour: 5,
+              minute: 30,
+              daysOfWeek: const [],
+              isEnabled: true,
+              selectedSurahIndex: 1,
+              numberOfAyahs: 3,
+              difficultyLevel: 'medium',
+            ),
+          );
+      container.read(alarmListProvider.notifier).refresh();
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(container: container, child: const TarteelRiseApp()),
+      );
+      await tester.pump();
+
+      expect(find.text('05:30'), findsOneWidget);
+
+      // Tapping the card (not the trailing delete icon) opens it for editing.
+      await tester.tap(find.text('05:30'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text('Edit Alarm'), findsOneWidget);
+
+      await tester.dragUntilVisible(
+        find.byIcon(Icons.add_circle_outline),
+        find.byType(ListView),
+        const Offset(0, -200),
+      );
+      await tester.tap(find.byIcon(Icons.add_circle_outline));
+      await tester.pump();
+
+      await tester.dragUntilVisible(
+        find.text('Save Changes'),
+        find.byType(ListView),
+        const Offset(0, -200),
+      );
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Save Changes'));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text('Edit Alarm'), findsNothing);
+      // Same alarm updated in place, not a second one created alongside it.
+      expect(container.read(alarmListProvider).length, 1);
+      expect(find.text('05:30'), findsOneWidget);
+      expect(find.textContaining('4 Ayahs'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'deleting an alarm removes it after confirmation',
+    (WidgetTester tester) async {
+      await container.read(databaseServiceProvider).saveAlarm(
+            AlarmModel(
+              id: 'delete-test-alarm',
+              hour: 6,
+              minute: 0,
+              daysOfWeek: const [],
+              isEnabled: true,
+              selectedSurahIndex: 1,
+            ),
+          );
+      container.read(alarmListProvider.notifier).refresh();
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(container: container, child: const TarteelRiseApp()),
+      );
+      await tester.pump();
+
+      expect(find.text('06:00'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.delete_outline));
+      await tester.pump();
+
+      expect(find.text('Delete Alarm?'), findsOneWidget);
+
+      await tester.runAsync(() async {
+        await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      });
+      await tester.pump();
+
+      expect(find.text('Delete Alarm?'), findsNothing);
+      expect(find.text('06:00'), findsNothing);
+      expect(find.text('No alarms yet.'), findsOneWidget);
     },
   );
 }

@@ -7,11 +7,18 @@ import '../../providers/alarm_state_provider.dart';
 import '../../providers/dashboard_providers.dart';
 import '../../theme/app_theme.dart';
 
-/// Builds a new [AlarmModel], persists it via [DatabaseService.saveAlarm],
-/// and schedules it via [AlarmHardwareService.scheduleMorningAlarm] —
-/// tying together the storage and hardware layers built in earlier phases.
+/// Builds an [AlarmModel] — a brand new one, or an edit of
+/// [existingAlarm] — persists it via `DatabaseService.saveAlarm`, and
+/// schedules it via `AlarmHardwareService.scheduleMorningAlarm`, tying
+/// together the storage and hardware layers built in earlier phases.
 class AlarmCreateScreen extends ConsumerStatefulWidget {
-  const AlarmCreateScreen({super.key});
+  /// Null for the "Add Alarm" flow. Non-null when reached by tapping an
+  /// existing alarm on the dashboard to edit it — [_AlarmCreateScreenState]
+  /// pre-fills every field from it and saves back under the same `id`
+  /// instead of minting a new one.
+  final AlarmModel? existingAlarm;
+
+  const AlarmCreateScreen({super.key, this.existingAlarm});
 
   @override
   ConsumerState<AlarmCreateScreen> createState() => _AlarmCreateScreenState();
@@ -31,6 +38,17 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
   @override
   void initState() {
     super.initState();
+
+    final AlarmModel? existing = widget.existingAlarm;
+    if (existing != null) {
+      _selectedTime = TimeOfDay(hour: existing.hour, minute: existing.minute);
+      _selectedDays.addAll(existing.daysOfWeek);
+      _selectedSurahIndex = existing.selectedSurahIndex;
+      _numberOfAyahs = existing.numberOfAyahs;
+      _difficultyLevel = existing.difficultyLevel;
+      return;
+    }
+
     _selectedTime = TimeOfDay.now();
     _numberOfAyahs = 3;
     // Pre-fill from whatever the Dashboard's Surah picker was last set to,
@@ -80,15 +98,23 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
   Future<void> _save() async {
     setState(() => _isSaving = true);
 
+    final AlarmModel? existing = widget.existingAlarm;
+    // A Surah switch invalidates the old bookmark position — ayah 6 of
+    // Al-Fatiha means nothing once the alarm is re-pointed at Al-Baqarah —
+    // so only carry it over when the Surah is unchanged.
+    final bool keepBookmark =
+        existing != null && existing.selectedSurahIndex == _selectedSurahIndex;
+
     final AlarmModel alarm = AlarmModel(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      id: existing?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
       hour: _selectedTime.hour,
       minute: _selectedTime.minute,
       daysOfWeek: _selectedDays.toList()..sort(),
-      isEnabled: true,
+      isEnabled: existing?.isEnabled ?? true,
       selectedSurahIndex: _selectedSurahIndex,
       numberOfAyahs: _numberOfAyahs,
       difficultyLevel: _difficultyLevel,
+      currentBookmarkAyah: keepBookmark ? existing.currentBookmarkAyah : 1,
     );
 
     await ref.read(databaseServiceProvider).saveAlarm(alarm);
@@ -111,8 +137,10 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final bool isEditing = widget.existingAlarm != null;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('New Alarm')),
+      appBar: AppBar(title: Text(isEditing ? 'Edit Alarm' : 'New Alarm')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
@@ -161,9 +189,9 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
                         height: 24,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Text(
-                        'Save Alarm',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                    : Text(
+                        isEditing ? 'Save Changes' : 'Save Alarm',
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
                       ),
               ),
             ),

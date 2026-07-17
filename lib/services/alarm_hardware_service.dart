@@ -97,16 +97,56 @@ class AlarmHardwareService {
       return false;
     }
 
-    try {
-      final DateTime triggerTime = _nextTriggerDateTime(
-        hour: alarmSettings.hour,
-        minute: alarmSettings.minute,
-        daysOfWeek: alarmSettings.daysOfWeek,
-      );
+    final DateTime triggerTime = _nextTriggerDateTime(
+      hour: alarmSettings.hour,
+      minute: alarmSettings.minute,
+      daysOfWeek: alarmSettings.daysOfWeek,
+    );
 
+    return _setNativeAlarm(
+      id: nativeAlarmIdFor(alarmSettings.id),
+      dateTime: triggerTime,
+      callerName: 'scheduleMorningAlarm',
+    );
+  }
+
+  /// Arms the "Dead Man's Switch" safety net: a *second*, independent
+  /// native alarm — same exact/wakeup scheduling, same looping Adhan, same
+  /// full-screen-intent foreground service as [scheduleMorningAlarm] —
+  /// firing exactly one minute from now under its own id
+  /// ([nativeFallbackAlarmIdFor], never the same id as the primary alarm).
+  ///
+  /// Call this the moment the user opens the mic to recite. If a validated
+  /// recitation (or the Emergency Snooze fallback) completes first, the
+  /// caller must cancel it via [cancelDeadMansSwitchAlarm]. If it fires
+  /// unopposed — the user stopped reciting, fell back asleep, or the app
+  /// process was killed entirely — this alarm is scheduled through the
+  /// native `alarm` package, so the Adhan resumes and the lock-screen
+  /// wake-up UI is forced back into focus via its own native foreground
+  /// service and full-screen intent, with zero dependency on the Dart
+  /// isolate that armed it still being alive.
+  Future<bool> scheduleDeadMansSwitchAlarm(AlarmModel alarmSettings) {
+    return _setNativeAlarm(
+      id: nativeFallbackAlarmIdFor(alarmSettings.id),
+      dateTime: DateTime.now().add(const Duration(minutes: 1)),
+      callerName: 'scheduleDeadMansSwitchAlarm',
+    );
+  }
+
+  /// Shared native-scheduling path for both [scheduleMorningAlarm] and
+  /// [scheduleDeadMansSwitchAlarm] — they differ only in which id and
+  /// `dateTime` they schedule under; every audio/volume/foreground-service
+  /// setting that matters for "must still ring if the app is dead" is
+  /// identical between them.
+  Future<bool> _setNativeAlarm({
+    required int id,
+    required DateTime dateTime,
+    required String callerName,
+  }) async {
+    try {
       final AlarmSettings nativeSettings = AlarmSettings(
-        id: nativeAlarmIdFor(alarmSettings.id),
-        dateTime: triggerTime,
+        id: id,
+        dateTime: dateTime,
         assetAudioPath: adhanAssetPath,
         loopAudio: true,
         // Shows a rescue notification if the app process is killed while
@@ -132,9 +172,7 @@ class AlarmHardwareService {
 
       return await Alarm.set(alarmSettings: nativeSettings).timeout(nativeCallTimeout);
     } catch (error, stackTrace) {
-      debugPrint(
-        'AlarmHardwareService.scheduleMorningAlarm failed: $error\n$stackTrace',
-      );
+      debugPrint('AlarmHardwareService.$callerName failed: $error\n$stackTrace');
       return false;
     }
   }
@@ -174,6 +212,24 @@ class AlarmHardwareService {
       return false;
     }
   }
+
+  /// Cancels the pending native schedule for [alarmId] (our Hive
+  /// [AlarmModel.id], not the native int id) — used when the user deletes
+  /// an alarm from the dashboard. Delegates to
+  /// [stopActiveAlarmSound]: the `alarm` package exposes only one native
+  /// "remove this id" call, used whether the alarm is currently ringing or
+  /// merely scheduled for later. Safe to call even if nothing is currently
+  /// scheduled for [alarmId].
+  Future<bool> cancelScheduledAlarm(String alarmId) =>
+      stopActiveAlarmSound(nativeAlarmIdFor(alarmId));
+
+  /// Disarms the Dead Man's Switch armed by [scheduleDeadMansSwitchAlarm]
+  /// for [alarmId] — called the moment recitation is validated (or the
+  /// Emergency Snooze fallback completes), so the safety-net alarm never
+  /// fires and re-rings an already-silenced session. Safe to call even if
+  /// nothing is currently scheduled under this id.
+  Future<bool> cancelDeadMansSwitchAlarm(String alarmId) =>
+      stopActiveAlarmSound(nativeFallbackAlarmIdFor(alarmId));
 
   /// Resumes the Adhan locally (looping, via just_audio) when a recitation
   /// session times out without completing. See [_resumePlayer] for why
@@ -218,6 +274,16 @@ class AlarmHardwareService {
     final int positive = hash & 0x7FFFFFFF;
     return positive == 0 ? 1 : positive;
   }
+
+  /// Derives the Dead Man's Switch's own native id for our Hive
+  /// [AlarmModel.id] — deliberately a *different* id than
+  /// [nativeAlarmIdFor] (via a distinguishing suffix fed into the same
+  /// hash), since `Alarm.set` replaces any existing native alarm that
+  /// shares an id. The primary wake alarm and its safety-net fallback must
+  /// stay independently addressable so cancelling one can never touch the
+  /// other.
+  static int nativeFallbackAlarmIdFor(String id) =>
+      nativeAlarmIdFor('$id::deadmans-switch');
 
   /// Finds the next `DateTime` at/after now matching [hour]:[minute] on one
   /// of [daysOfWeek] (ISO weekday: 1=Monday..7=Sunday). An empty
