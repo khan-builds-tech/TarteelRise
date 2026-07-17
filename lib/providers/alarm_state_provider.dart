@@ -97,6 +97,30 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
 
   Timer? _resumeTimer;
 
+  /// High-water mark for the Arabic Ayah match percentage — the single
+  /// source of truth written into `session.currentProgress`, which is what
+  /// the UI's progress bar renders. Deliberately a field on the notifier
+  /// itself, outside `ActiveAlarmSession` and the per-chunk `onResult` text
+  /// buffer, so a transient empty-string or lower-scoring partial result
+  /// between spoken words (the speech engine revising its whole-utterance
+  /// hypothesis mid-stream is normal, expected behavior, not an error) can
+  /// never pull the visible bar — or the threshold check that decides
+  /// whether the Ayah cleared — back down. Only ever increases within one
+  /// Arabic-recitation attempt.
+  ///
+  /// The only two places allowed to reset this back to `0.0` are
+  /// [triggerAlarmSession] (a brand new alarm ring, a different Ayah) and
+  /// clearing into the translation gate in [processSpeechInput] (a
+  /// different match target). A mic restart ([retryVoiceCapture]) or a
+  /// grace-period timeout ([_handleIncompleteTimeout]) must never touch it.
+  double _highestArabicScore = 0.0;
+
+  /// Same ratchet as [_highestArabicScore], for the English translation
+  /// gate's progress bar (`session.translationProgress`). Reset only in
+  /// [processSpeechInput] the moment the translation gate is freshly
+  /// entered.
+  double _highestTranslationScore = 0.0;
+
   AlarmStateNotifier({
     required this.speechService,
     required this.alarmHardwareService,
@@ -108,6 +132,9 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
   // wake-up layout can be exercised without a real scheduled alarm.
   void seedPreviewSessionForDebug() {
     if (!kDebugMode) return;
+
+    _highestArabicScore = 0.0;
+    _highestTranslationScore = 0.0;
 
     final AlarmModel mockAlarm = AlarmModel(
       id: 'preview-mock-alarm',
@@ -150,6 +177,12 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     String translation,
   ) {
     if (state.state != AlarmStateEnum.idle) return;
+
+    // A brand new alarm ring for a brand new Ayah — the only legitimate
+    // reset point for both ratchets. Everything else in this class (mic
+    // restarts, grace-period timeouts) must leave them untouched.
+    _highestArabicScore = 0.0;
+    _highestTranslationScore = 0.0;
 
     state = AlarmSessionState(
       state: AlarmStateEnum.ringing,
@@ -288,19 +321,27 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
       session.currentAyahArabic,
       recognizedText,
     );
-    final double matchPercentage = calculateMatchPercentage(
+    // The strict maximum-value lock: a chunk that scores lower than the
+    // ratchet's current value (including an empty-string partial result
+    // between spoken words, which scores 0) is recorded in the per-word
+    // flags above but never allowed to pull the ratchet itself back down.
+    final double chunkScore = calculateMatchPercentage(
       session.currentAyahArabic,
       recognizedText,
     );
+    if (chunkScore > _highestArabicScore) {
+      _highestArabicScore = chunkScore;
+    }
+
     final ActiveAlarmSession updatedSession = session.copyWith(
-      currentProgress: matchPercentage,
+      currentProgress: _highestArabicScore,
       matchedWordFlags: wordFlags,
     );
     final double threshold = _thresholdForDifficulty(
       session.activeAlarm.difficultyLevel,
     );
 
-    if (matchPercentage < threshold) {
+    if (_highestArabicScore < threshold) {
       state = AlarmSessionState(
         state: AlarmStateEnum.reciting,
         session: updatedSession,
@@ -308,6 +349,11 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
       );
       return;
     }
+
+    // Freshly entering the translation gate — a different match target,
+    // so its own ratchet starts clean rather than inheriting whatever the
+    // Arabic gate happened to reach.
+    _highestTranslationScore = 0.0;
 
     state = AlarmSessionState(
       state: AlarmStateEnum.recitingTranslation,
@@ -343,18 +389,25 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
       session.currentAyahTranslation,
       recognizedText,
     );
-    final double matchPercentage = calculateTranslationMatchPercentage(
+    // Same strict maximum-value lock as the Arabic gate: a lower-scoring
+    // (or empty-string) partial result between spoken words never pulls
+    // this ratchet back down.
+    final double chunkScore = calculateTranslationMatchPercentage(
       session.currentAyahTranslation,
       recognizedText,
     );
+    if (chunkScore > _highestTranslationScore) {
+      _highestTranslationScore = chunkScore;
+    }
+
     final ActiveAlarmSession updatedSession = session.copyWith(
-      translationProgress: matchPercentage,
+      translationProgress: _highestTranslationScore,
       translationMatchedWordFlags: wordFlags,
     );
     final double threshold = _thresholdForDifficulty(
       session.activeAlarm.difficultyLevel,
     );
-    final bool cleared = matchPercentage >= threshold;
+    final bool cleared = _highestTranslationScore >= threshold;
 
     state = AlarmSessionState(
       state: cleared ? AlarmStateEnum.completed : AlarmStateEnum.recitingTranslation,

@@ -182,6 +182,41 @@ void main() {
   });
 
   test(
+    'the Arabic progress bar holds its peak instead of dropping when a later partial '
+    'result (e.g. a pause between words) scores lower or comes back empty',
+    () async {
+      final AlarmStateNotifier notifier = buildNotifier();
+      final AlarmModel alarm = buildAlFatihaAlarm(); // 'easy' difficulty -> 65% threshold.
+      await databaseService.saveAlarm(alarm);
+
+      notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
+      await beginReciting(notifier);
+
+      // 4 of the Ayah's 8 words -> 50%, below Easy's 65% threshold.
+      await notifier.processSpeechInput('بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ');
+      expect(notifier.state.state, AlarmStateEnum.reciting);
+      expect(notifier.state.session?.currentProgress, 50.0);
+
+      // The speech engine revises its whole-utterance hypothesis down to
+      // nothing between spoken words — a real, expected occurrence, not an
+      // error. The ratchet must hold at the peak already reached.
+      await notifier.processSpeechInput('');
+      expect(notifier.state.state, AlarmStateEnum.reciting);
+      expect(notifier.state.session?.currentProgress, 50.0);
+
+      // 6 of 8 words -> 75%, clears the threshold from the ratcheted peak.
+      await notifier.processSpeechInput(
+        'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ',
+      );
+      expect(notifier.state.state, AlarmStateEnum.recitingTranslation);
+      expect(notifier.state.session?.currentProgress, 75.0);
+      // The translation gate's own ratchet starts clean, not inheriting
+      // the Arabic gate's peak.
+      expect(notifier.state.session?.translationProgress, 0.0);
+    },
+  );
+
+  test(
     'leaves the bookmark untouched when the Ayah clears but the translation never does',
     () async {
       final AlarmStateNotifier notifier = buildNotifier();
