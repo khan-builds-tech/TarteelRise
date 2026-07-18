@@ -13,6 +13,7 @@ import '../services/speech_service.dart';
 import '../utils/arabic_utils.dart';
 import '../utils/bookmark_utils.dart';
 import '../utils/translation_match_utils.dart';
+import '../utils/word_match_utils.dart';
 
 /// Provides the hardware-facing services the state machine drives as a
 /// side effect of its own transitions (starting/stopping the mic, killing
@@ -97,29 +98,35 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
 
   Timer? _resumeTimer;
 
-  /// High-water mark for the Arabic Ayah match percentage — the single
-  /// source of truth written into `session.currentProgress`, which is what
-  /// the UI's progress bar renders. Deliberately a field on the notifier
-  /// itself, outside `ActiveAlarmSession` and the per-chunk `onResult` text
-  /// buffer, so a transient empty-string or lower-scoring partial result
-  /// between spoken words (the speech engine revising its whole-utterance
-  /// hypothesis mid-stream is normal, expected behavior, not an error) can
-  /// never pull the visible bar — or the threshold check that decides
-  /// whether the Ayah cleared — back down. Only ever increases within one
-  /// Arabic-recitation attempt.
+  /// Accumulated, OR-merged word-match flags for the Arabic Ayah — the
+  /// single source of truth both `session.currentProgress` (the progress
+  /// bar) and `session.matchedWordFlags` (the per-word highlighting) are
+  /// derived from on every `onResult` chunk, via [mergeWordMatchFlags] and
+  /// [percentageFromFlags] respectively. Deliberately a field on the
+  /// notifier itself, outside `ActiveAlarmSession` and the per-chunk
+  /// `onResult` text buffer, so a transient empty-string or lower-scoring
+  /// partial result between spoken words (the speech engine revising its
+  /// whole-utterance hypothesis mid-stream is normal, expected behavior,
+  /// not an error) can never un-highlight an already-recognized word or
+  /// pull the progress bar back down — and deriving *both* from this one
+  /// list, rather than ratcheting a percentage separately from whatever
+  /// the latest raw chunk's flags happen to be, is what keeps the
+  /// highlighted word count and the displayed percentage always in
+  /// agreement instead of drifting apart.
   ///
-  /// The only two places allowed to reset this back to `0.0` are
+  /// The only two places allowed to reset this back to empty are
   /// [triggerAlarmSession] (a brand new alarm ring, a different Ayah) and
   /// clearing into the translation gate in [processSpeechInput] (a
   /// different match target). A mic restart ([retryVoiceCapture]) or a
   /// grace-period timeout ([_handleIncompleteTimeout]) must never touch it.
-  double _highestArabicScore = 0.0;
+  List<bool> _accumulatedArabicWordFlags = const <bool>[];
 
-  /// Same ratchet as [_highestArabicScore], for the English translation
-  /// gate's progress bar (`session.translationProgress`). Reset only in
+  /// Same ratchet as [_accumulatedArabicWordFlags], for the English
+  /// translation gate (`session.translationProgress` /
+  /// `session.translationMatchedWordFlags`). Reset only in
   /// [processSpeechInput] the moment the translation gate is freshly
   /// entered.
-  double _highestTranslationScore = 0.0;
+  List<bool> _accumulatedTranslationWordFlags = const <bool>[];
 
   AlarmStateNotifier({
     required this.speechService,
@@ -133,8 +140,8 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
   void seedPreviewSessionForDebug() {
     if (!kDebugMode) return;
 
-    _highestArabicScore = 0.0;
-    _highestTranslationScore = 0.0;
+    _accumulatedArabicWordFlags = const <bool>[];
+    _accumulatedTranslationWordFlags = const <bool>[];
 
     final AlarmModel mockAlarm = AlarmModel(
       id: 'preview-mock-alarm',
@@ -181,8 +188,8 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     // A brand new alarm ring for a brand new Ayah — the only legitimate
     // reset point for both ratchets. Everything else in this class (mic
     // restarts, grace-period timeouts) must leave them untouched.
-    _highestArabicScore = 0.0;
-    _highestTranslationScore = 0.0;
+    _accumulatedArabicWordFlags = const <bool>[];
+    _accumulatedTranslationWordFlags = const <bool>[];
 
     state = AlarmSessionState(
       state: AlarmStateEnum.ringing,
@@ -204,10 +211,26 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
       await alarmHardwareService.duckAlarmForRecitation(
         AlarmHardwareService.nativeAlarmIdFor(session.activeAlarm.id),
       );
+      // `ringing` isn't only reached via a fresh alarm (the id stopped
+      // above) — it's also reached when the Dead Man's Switch itself
+      // fires and resumes the Adhan under its own, *different* native
+      // alarm id. Without also stopping that one, tapping "Pause Adhan"
+      // after a switch-triggered resume silences nothing audible and
+      // looks like the button doesn't work. Unconditional and harmless —
+      // a no-op if nothing is scheduled under this id.
+      await alarmHardwareService.cancelDeadMansSwitchAlarm(session.activeAlarm.id);
     }
 
     state = state.copyWith(state: AlarmStateEnum.paused);
   }
+
+  /// How much later than [resumeGracePeriod] the native Dead Man's Switch
+  /// is allowed to fire — enough slack that, under normal conditions (the
+  /// Dart isolate alive and responsive), `_handleIncompleteTimeout`'s own
+  /// cancel call reliably lands before the native alarm's delivery, so the
+  /// switch is only ever the actual backup, never a second, competing
+  /// deadline.
+  static const Duration _deadMansSwitchBuffer = Duration(seconds: 15);
 
   /// Step two: open the microphone once the user is ready to recite. Only
   /// valid from [AlarmStateEnum.paused] — the Adhan must already be silent.
@@ -232,9 +255,18 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     // killed, or merely throttled by the OS while backgrounded. This native
     // alarm is the Dead Man's Switch that fires regardless. Best-effort and
     // unawaited — starting the mic can't stall on a native scheduling call.
+    //
+    // `fallbackDelay` deliberately matches `resumeGracePeriod` (plus a
+    // small buffer) rather than some shorter, independent duration — a
+    // fallback that fires *before* the actual grace period lapses would
+    // resume the Adhan mid-recitation while the user is still legitimately
+    // reciting successfully.
     final ActiveAlarmSession? armingSession = state.session;
     if (armingSession != null) {
-      unawaited(alarmHardwareService.scheduleDeadMansSwitchAlarm(armingSession.activeAlarm));
+      unawaited(alarmHardwareService.scheduleDeadMansSwitchAlarm(
+        armingSession.activeAlarm,
+        fallbackDelay: resumeGracePeriod + _deadMansSwitchBuffer,
+      ));
     }
 
     final bool listening = await speechService.startListening(
@@ -317,31 +349,29 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     final ActiveAlarmSession? session = state.session;
     if (state.state != AlarmStateEnum.reciting || session == null) return;
 
-    final List<bool> wordFlags = matchedWordFlags(
+    // The strict maximum-value lock: merge this chunk's flags into the
+    // running total (once a word is `true` it stays `true`), then derive
+    // BOTH the per-word highlighting and the percentage from that same
+    // merged list — never from this chunk's raw flags alone — so the two
+    // can never disagree, and neither can be pulled down by an
+    // empty-string or lower-scoring partial result between spoken words.
+    final List<bool> chunkFlags = matchedWordFlags(
       session.currentAyahArabic,
       recognizedText,
     );
-    // The strict maximum-value lock: a chunk that scores lower than the
-    // ratchet's current value (including an empty-string partial result
-    // between spoken words, which scores 0) is recorded in the per-word
-    // flags above but never allowed to pull the ratchet itself back down.
-    final double chunkScore = calculateMatchPercentage(
-      session.currentAyahArabic,
-      recognizedText,
-    );
-    if (chunkScore > _highestArabicScore) {
-      _highestArabicScore = chunkScore;
-    }
+    _accumulatedArabicWordFlags =
+        mergeWordMatchFlags(_accumulatedArabicWordFlags, chunkFlags);
+    final double score = percentageFromFlags(_accumulatedArabicWordFlags);
 
     final ActiveAlarmSession updatedSession = session.copyWith(
-      currentProgress: _highestArabicScore,
-      matchedWordFlags: wordFlags,
+      currentProgress: score,
+      matchedWordFlags: _accumulatedArabicWordFlags,
     );
     final double threshold = _thresholdForDifficulty(
       session.activeAlarm.difficultyLevel,
     );
 
-    if (_highestArabicScore < threshold) {
+    if (score < threshold) {
       state = AlarmSessionState(
         state: AlarmStateEnum.reciting,
         session: updatedSession,
@@ -353,7 +383,7 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     // Freshly entering the translation gate — a different match target,
     // so its own ratchet starts clean rather than inheriting whatever the
     // Arabic gate happened to reach.
-    _highestTranslationScore = 0.0;
+    _accumulatedTranslationWordFlags = const <bool>[];
 
     state = AlarmSessionState(
       state: AlarmStateEnum.recitingTranslation,
@@ -385,29 +415,26 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     final ActiveAlarmSession? session = state.session;
     if (state.state != AlarmStateEnum.recitingTranslation || session == null) return;
 
-    final List<bool> wordFlags = matchedTranslationWordFlags(
+    // Same strict maximum-value lock as the Arabic gate: merge into the
+    // running total and derive both the highlighting and the percentage
+    // from that one merged list, so they can never disagree or be pulled
+    // down by a lower-scoring/empty-string partial result.
+    final List<bool> chunkFlags = matchedTranslationWordFlags(
       session.currentAyahTranslation,
       recognizedText,
     );
-    // Same strict maximum-value lock as the Arabic gate: a lower-scoring
-    // (or empty-string) partial result between spoken words never pulls
-    // this ratchet back down.
-    final double chunkScore = calculateTranslationMatchPercentage(
-      session.currentAyahTranslation,
-      recognizedText,
-    );
-    if (chunkScore > _highestTranslationScore) {
-      _highestTranslationScore = chunkScore;
-    }
+    _accumulatedTranslationWordFlags =
+        mergeWordMatchFlags(_accumulatedTranslationWordFlags, chunkFlags);
+    final double score = percentageFromFlags(_accumulatedTranslationWordFlags);
 
     final ActiveAlarmSession updatedSession = session.copyWith(
-      translationProgress: _highestTranslationScore,
-      translationMatchedWordFlags: wordFlags,
+      translationProgress: score,
+      translationMatchedWordFlags: _accumulatedTranslationWordFlags,
     );
     final double threshold = _thresholdForDifficulty(
       session.activeAlarm.difficultyLevel,
     );
-    final bool cleared = _highestTranslationScore >= threshold;
+    final bool cleared = score >= threshold;
 
     state = AlarmSessionState(
       state: cleared ? AlarmStateEnum.completed : AlarmStateEnum.recitingTranslation,
@@ -459,8 +486,9 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
 
   /// Reacts to the native Dead Man's Switch itself firing (see
   /// `startVoiceCapture`/`AlarmHardwareService.scheduleDeadMansSwitchAlarm`)
-  /// — meaning the 1-minute recitation grace period lapsed *without*
-  /// [_handleIncompleteTimeout] catching it first, which only happens if
+  /// — meaning [resumeGracePeriod] (plus [_deadMansSwitchBuffer]) lapsed
+  /// *without* [_handleIncompleteTimeout] catching it first, which only
+  /// happens if
   /// this isolate died or was throttled sometime after the switch was
   /// armed. By the time this runs, the native alarm has already
   /// independently resumed the Adhan and, via its full-screen intent,

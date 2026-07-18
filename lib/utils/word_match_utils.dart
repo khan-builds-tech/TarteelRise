@@ -28,6 +28,31 @@ List<bool> wordMatchFlags(List<String> originalWords, List<String> recognizedWor
   }).toList();
 }
 
+/// OR-merges [previous] and [current] word-match flags position by
+/// position: once a word has been recognized, it stays recognized even if
+/// a later speech-to-text partial result revises its whole-utterance
+/// hypothesis and drops that word. Returns [current] unchanged if
+/// [previous] is a different length (the very first result of an
+/// attempt, where there is nothing yet to merge with).
+///
+/// This is the actual ratchet — callers should keep accumulating into one
+/// running flags list with this, then derive the displayed percentage
+/// from that *same* list via [percentageFromFlags], rather than tracking
+/// the percentage separately. Deriving both from one shared list is what
+/// guarantees the highlighted word count and the displayed percentage
+/// always agree; ratcheting the percentage alone while highlighting still
+/// reflects only the latest raw chunk is what lets them drift apart.
+List<bool> mergeWordMatchFlags(List<bool> previous, List<bool> current) {
+  if (previous.length != current.length) {
+    return current;
+  }
+
+  return List<bool>.generate(
+    current.length,
+    (int i) => previous[i] || current[i],
+  );
+}
+
 /// The percentage of `true` flags in [flags], 0.0 for an empty list rather
 /// than dividing by zero.
 double percentageFromFlags(List<bool> flags) {

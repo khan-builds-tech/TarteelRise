@@ -113,8 +113,16 @@ class AlarmHardwareService {
   /// Arms the "Dead Man's Switch" safety net: a *second*, independent
   /// native alarm — same exact/wakeup scheduling, same looping Adhan, same
   /// full-screen-intent foreground service as [scheduleMorningAlarm] —
-  /// firing exactly one minute from now under its own id
+  /// firing [fallbackDelay] from now under its own id
   /// ([nativeFallbackAlarmIdFor], never the same id as the primary alarm).
+  ///
+  /// [fallbackDelay] must match (or very slightly exceed) the caller's own
+  /// in-app grace period, never a shorter, independent duration — this is
+  /// meant purely as backup for "the Dart timer didn't fire," not a
+  /// second, earlier deadline. A hardcoded delay shorter than the actual
+  /// grace period fires this mid-recitation, resuming the Adhan under a
+  /// native alarm id `pauseAdhanForReview` doesn't know about, while the
+  /// user is still legitimately, successfully reciting.
   ///
   /// Call this the moment the user opens the mic to recite. If a validated
   /// recitation (or the Emergency Snooze fallback) completes first, the
@@ -125,10 +133,13 @@ class AlarmHardwareService {
   /// wake-up UI is forced back into focus via its own native foreground
   /// service and full-screen intent, with zero dependency on the Dart
   /// isolate that armed it still being alive.
-  Future<bool> scheduleDeadMansSwitchAlarm(AlarmModel alarmSettings) {
+  Future<bool> scheduleDeadMansSwitchAlarm(
+    AlarmModel alarmSettings, {
+    required Duration fallbackDelay,
+  }) {
     return _setNativeAlarm(
       id: nativeFallbackAlarmIdFor(alarmSettings.id),
-      dateTime: DateTime.now().add(const Duration(minutes: 1)),
+      dateTime: DateTime.now().add(fallbackDelay),
       callerName: 'scheduleDeadMansSwitchAlarm',
     );
   }

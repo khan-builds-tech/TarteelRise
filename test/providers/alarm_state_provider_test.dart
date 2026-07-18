@@ -22,11 +22,37 @@ const String _placeholderTranslation = 'It is You we worship and You we ask for 
 class _FakeAlarmHardwareService extends AlarmHardwareService {
   bool resumeAdhanPlaybackCalled = false;
 
+  /// Alarm ids passed to [cancelDeadMansSwitchAlarm], in call order — lets
+  /// tests confirm the fallback alarm is actually disarmed at every exit
+  /// point, in particular `pauseAdhanForReview` (see the regression test
+  /// for "Pause Adhan silences nothing after a Dead Man's Switch resume").
+  final List<String> cancelledDeadMansSwitchAlarmIds = <String>[];
+
+  /// The [fallbackDelay] passed to the most recent [scheduleDeadMansSwitchAlarm]
+  /// call — lets tests confirm it tracks the notifier's own grace period
+  /// rather than a hardcoded, independent duration.
+  Duration? lastScheduledFallbackDelay;
+
   _FakeAlarmHardwareService() : super(nativeCallTimeout: const Duration(milliseconds: 50));
 
   @override
   Future<void> resumeAdhanPlayback() async {
     resumeAdhanPlaybackCalled = true;
+  }
+
+  @override
+  Future<bool> cancelDeadMansSwitchAlarm(String alarmId) async {
+    cancelledDeadMansSwitchAlarmIds.add(alarmId);
+    return true;
+  }
+
+  @override
+  Future<bool> scheduleDeadMansSwitchAlarm(
+    AlarmModel alarmSettings, {
+    required Duration fallbackDelay,
+  }) async {
+    lastScheduledFallbackDelay = fallbackDelay;
+    return true;
   }
 }
 
@@ -217,6 +243,47 @@ void main() {
   );
 
   test(
+    'word highlighting and the progress percentage always agree, and a '
+    'partial result never un-highlights an already-recognized word',
+    () async {
+      final AlarmStateNotifier notifier = buildNotifier();
+      final AlarmModel alarm = buildAlFatihaAlarm();
+      await databaseService.saveAlarm(alarm);
+
+      notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
+      await beginReciting(notifier);
+
+      // Word 1 ('بِسْمِ') and word 4 ('الرَّحِيمِ') recognized, out of order —
+      // 2 of 8 words -> 25%.
+      await notifier.processSpeechInput('الرَّحِيمِ بِسْمِ');
+      List<bool>? flags = notifier.state.session?.matchedWordFlags;
+      expect(flags, <bool>[true, false, false, true, false, false, false, false]);
+      expect(
+        notifier.state.session?.currentProgress,
+        100.0 * flags!.where((f) => f).length / flags.length,
+      );
+
+      // The engine's whole-utterance hypothesis drops to nothing between
+      // words — the already-highlighted words must stay highlighted, not
+      // revert, even momentarily.
+      await notifier.processSpeechInput('');
+      flags = notifier.state.session?.matchedWordFlags;
+      expect(flags, <bool>[true, false, false, true, false, false, false, false]);
+      expect(notifier.state.session?.currentProgress, 25.0);
+
+      // Words 2 and 3 ('اللَّهِ', 'الرَّحْمَٰنِ') now also recognized —
+      // merges with the earlier peak rather than replacing it: 4 of 8 -> 50%.
+      await notifier.processSpeechInput('اللَّهِ الرَّحْمَٰنِ');
+      flags = notifier.state.session?.matchedWordFlags;
+      expect(flags, <bool>[true, true, true, true, false, false, false, false]);
+      expect(
+        notifier.state.session?.currentProgress,
+        100.0 * flags!.where((f) => f).length / flags.length,
+      );
+    },
+  );
+
+  test(
     'leaves the bookmark untouched when the Ayah clears but the translation never does',
     () async {
       final AlarmStateNotifier notifier = buildNotifier();
@@ -310,6 +377,57 @@ void main() {
       expect(notifier.state.state, AlarmStateEnum.ringing);
       // The session survives the timeout so the user can pause and try again.
       expect(notifier.state.session?.currentAyahArabic, _alFatihaAyahsOneAndTwo);
+    },
+  );
+
+  test(
+    "arms the native safety-net alarm for the actual grace period, not a shorter "
+    "independent duration that would fire mid-recitation",
+    () async {
+      final _FakeAlarmHardwareService fakeHardware = _FakeAlarmHardwareService();
+      const Duration gracePeriod = Duration(minutes: 4);
+      final AlarmStateNotifier notifier = buildNotifier(
+        resumeGracePeriod: gracePeriod,
+        alarmHardwareService: fakeHardware,
+      );
+      final AlarmModel alarm = buildAlFatihaAlarm();
+
+      notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
+      await beginReciting(notifier);
+
+      expect(
+        fakeHardware.lastScheduledFallbackDelay,
+        gracePeriod + const Duration(seconds: 15),
+      );
+    },
+  );
+
+  test(
+    "pausing the Adhan after the safety-net alarm resumed it actually silences it, "
+    "not just the primary alarm id",
+    () async {
+      final _FakeAlarmHardwareService fakeHardware = _FakeAlarmHardwareService();
+      final AlarmStateNotifier notifier = buildNotifier(alarmHardwareService: fakeHardware);
+      final AlarmModel alarm = buildAlFatihaAlarm();
+
+      notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
+      await beginReciting(notifier);
+
+      // Simulates the native safety-net alarm firing and resuming the
+      // Adhan under its own, different native id while the app is still
+      // alive and mid-recitation.
+      notifier.handleDeadMansSwitchFired(
+        alarm,
+        _alFatihaAyahsOneAndTwo,
+        _placeholderTranslation,
+      );
+      expect(notifier.state.state, AlarmStateEnum.ringing);
+
+      fakeHardware.cancelledDeadMansSwitchAlarmIds.clear();
+      await notifier.pauseAdhanForReview();
+
+      expect(fakeHardware.cancelledDeadMansSwitchAlarmIds, contains(alarm.id));
+      expect(notifier.state.state, AlarmStateEnum.paused);
     },
   );
 
