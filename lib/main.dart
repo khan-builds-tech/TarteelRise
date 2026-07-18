@@ -31,6 +31,13 @@ Future<void> main() async {
   await alarmHardwareService.rescheduleAllEnabledAlarms(databaseService.getAllAlarms());
   await alarmHardwareService.requestBatteryOptimizationExemption();
 
+  // Parses the ~2.3MB bundled Quran dataset off the synchronous call
+  // stack (see QuranRepository.loadFromAssets) before any widget or the
+  // ringing listener can ask for Surah/Ayah data — everything downstream
+  // reads it synchronously thereafter.
+  final QuranRepository quranRepository = container.read(quranRepositoryProvider);
+  await quranRepository.loadFromAssets();
+
   // Pre-warm the on-device speech engine so the first "Tap to Recite" during
   // a wake-up doesn't stall on a cold permission/init handshake.
   await container.read(speechServiceProvider).initializeSpeech();
@@ -38,7 +45,7 @@ Future<void> main() async {
   final AlarmRingingListener ringingListener = AlarmRingingListener(
     databaseService: databaseService,
     alarmStateNotifier: container.read(alarmStateProvider.notifier),
-    resolveAyahContent: _resolveAyahContent,
+    resolveAyahContent: (AlarmModel alarm) => _resolveAyahContent(alarm, quranRepository),
   );
   ringingListener.start();
 
@@ -50,13 +57,15 @@ Future<void> main() async {
   );
 }
 
-/// Looks up this session's Ayah content from [QuranRepository] — Surah +
+/// Looks up this session's Ayah content from [quranRepository] — Surah +
 /// bookmark from [alarm]. Deliberately does NOT advance the bookmark here:
 /// that only happens once [AlarmStateNotifier] confirms a validated
 /// recitation, so a missed or failed morning re-reads the same ayahs
 /// tomorrow instead of silently skipping ahead.
-Future<AyahContent> _resolveAyahContent(AlarmModel alarm) async {
-  const QuranRepository quranRepository = QuranRepository();
+Future<AyahContent> _resolveAyahContent(
+  AlarmModel alarm,
+  QuranRepository quranRepository,
+) async {
   final QuranSession session = quranRepository.buildSession(
     surahIndex: alarm.selectedSurahIndex,
     startAyah: alarm.currentBookmarkAyah,

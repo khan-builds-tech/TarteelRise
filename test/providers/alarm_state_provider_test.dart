@@ -6,6 +6,7 @@ import 'package:tarteel_rise/models/alarm_state_enum.dart';
 import 'package:tarteel_rise/providers/alarm_state_provider.dart';
 import 'package:tarteel_rise/services/alarm_hardware_service.dart';
 import 'package:tarteel_rise/services/database_service.dart';
+import 'package:tarteel_rise/services/quran_repository.dart';
 import 'package:tarteel_rise/services/speech_service.dart';
 
 const String _alFatihaAyahsOneAndTwo =
@@ -77,8 +78,14 @@ class _FakeSpeechService extends SpeechService {
 }
 
 void main() {
+  // `QuranRepository.loadFromAssets` (via `rootBundle.loadString`) needs
+  // the Flutter test binding — plain `test()` (unlike `testWidgets()`)
+  // doesn't set this up automatically.
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late Directory tempHiveDir;
   late DatabaseService databaseService;
+  late QuranRepository quranRepository;
 
   AlarmStateNotifier buildNotifier({
     Duration? resumeGracePeriod,
@@ -90,6 +97,7 @@ void main() {
       alarmHardwareService: alarmHardwareService ??
           AlarmHardwareService(nativeCallTimeout: const Duration(milliseconds: 50)),
       databaseService: databaseService,
+      quranRepository: quranRepository,
       resumeGracePeriod: resumeGracePeriod ?? const Duration(minutes: 4),
     );
     // Reset to a clean `idle` state so each test drives the machine from
@@ -97,6 +105,14 @@ void main() {
     notifier.resetToIdle();
     return notifier;
   }
+
+  setUpAll(() async {
+    // Loaded once for the whole file — `_advanceBookmark` needs real
+    // Surah metadata (Al-Fatiha's real length) to compute wrap-around,
+    // and re-parsing the ~2.3MB dataset per test would be wasteful.
+    quranRepository = QuranRepository();
+    await quranRepository.loadFromAssets();
+  });
 
   setUp(() async {
     tempHiveDir = Directory.systemTemp.createTempSync('bookmark_timing_test_hive');

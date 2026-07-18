@@ -30,7 +30,21 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
 
   late TimeOfDay _selectedTime;
   final Set<int> _selectedDays = <int>{};
-  late int _selectedSurahIndex;
+
+  /// Null only if [QuranRepository.loadFromAssets] never completed (a
+  /// bundled-asset failure) — [build] shows a fallback message instead of
+  /// the form in that case, so nothing below this ever has to null-check
+  /// it once the form is actually showing.
+  Surah? _selectedSurah;
+
+  /// The specific Ayah number this alarm starts reciting from — the
+  /// user's chosen "wake-up challenge verse". Persisted as
+  /// [AlarmModel.currentBookmarkAyah]; Smart Bookmarking then advances it
+  /// automatically after each validated recitation, same as before, just
+  /// now with an explicit, user-editable starting point instead of always
+  /// defaulting silently to 1.
+  late int _selectedStartingAyah;
+
   late int _numberOfAyahs;
   String _difficultyLevel = 'medium';
   bool _isSaving = false;
@@ -39,26 +53,44 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
   void initState() {
     super.initState();
 
+    final List<Surah> allSurahs = ref.read(quranRepositoryProvider).allSurahs;
     final AlarmModel? existing = widget.existingAlarm;
+
     if (existing != null) {
       _selectedTime = TimeOfDay(hour: existing.hour, minute: existing.minute);
       _selectedDays.addAll(existing.daysOfWeek);
-      _selectedSurahIndex = existing.selectedSurahIndex;
+      _selectedSurah = _findSurah(allSurahs, existing.selectedSurahIndex) ?? _firstOrNull(allSurahs);
       _numberOfAyahs = existing.numberOfAyahs;
       _difficultyLevel = existing.difficultyLevel;
-      return;
+      _selectedStartingAyah = existing.currentBookmarkAyah;
+    } else {
+      _selectedTime = TimeOfDay.now();
+      _numberOfAyahs = 3;
+      _selectedStartingAyah = 1;
+      // Pre-fill from whatever the Dashboard's Surah picker was last set
+      // to, so tapping a Surah there then "Add Alarm" here feels connected.
+      final int? preselectedId = ref.read(selectedSurahIndexProvider);
+      _selectedSurah = (preselectedId == null ? null : _findSurah(allSurahs, preselectedId)) ??
+          _firstOrNull(allSurahs);
     }
 
-    _selectedTime = TimeOfDay.now();
-    _numberOfAyahs = 3;
-    // Pre-fill from whatever the Dashboard's Surah picker was last set to,
-    // so tapping a Surah there then "Add Alarm" here feels connected.
-    _selectedSurahIndex =
-        ref.read(selectedSurahIndexProvider) ?? starterSurahCatalog.first.index;
+    // Defensive clamp — guards against persisted data (or a pre-selected
+    // id) referencing an Ayah number outside this Surah's real range.
+    final Surah? surah = _selectedSurah;
+    if (surah != null) {
+      _numberOfAyahs = _numberOfAyahs.clamp(1, surah.totalVerses);
+      _selectedStartingAyah = _selectedStartingAyah.clamp(1, surah.totalVerses);
+    }
   }
 
-  Surah get _selectedSurah =>
-      starterSurahCatalog.firstWhere((surah) => surah.index == _selectedSurahIndex);
+  static Surah? _findSurah(List<Surah> surahs, int id) {
+    for (final Surah surah in surahs) {
+      if (surah.id == id) return surah;
+    }
+    return null;
+  }
+
+  static Surah? _firstOrNull(List<Surah> surahs) => surahs.isEmpty ? null : surahs.first;
 
   Future<void> _pickTime() async {
     final TimeOfDay? picked = await showTimePicker(
@@ -82,39 +114,47 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
 
   void _selectSurah(Surah surah) {
     setState(() {
-      _selectedSurahIndex = surah.index;
-      if (_numberOfAyahs > surah.ayahCount) {
-        _numberOfAyahs = surah.ayahCount;
+      _selectedSurah = surah;
+      // A different Surah invalidates both the ayah count and the
+      // starting Ayah if they overran the new Surah's shorter length.
+      if (_numberOfAyahs > surah.totalVerses) {
+        _numberOfAyahs = surah.totalVerses;
+      }
+      if (_selectedStartingAyah > surah.totalVerses) {
+        _selectedStartingAyah = surah.totalVerses;
       }
     });
   }
 
+  void _selectStartingAyah(int ayahNumber) {
+    setState(() => _selectedStartingAyah = ayahNumber);
+  }
+
   void _adjustAyahCount(int delta) {
+    final Surah? surah = _selectedSurah;
+    if (surah == null) return;
     setState(() {
-      _numberOfAyahs = (_numberOfAyahs + delta).clamp(1, _selectedSurah.ayahCount);
+      _numberOfAyahs = (_numberOfAyahs + delta).clamp(1, surah.totalVerses);
     });
   }
 
   Future<void> _save() async {
+    final Surah? surah = _selectedSurah;
+    if (surah == null) return;
+
     setState(() => _isSaving = true);
 
     final AlarmModel? existing = widget.existingAlarm;
-    // A Surah switch invalidates the old bookmark position — ayah 6 of
-    // Al-Fatiha means nothing once the alarm is re-pointed at Al-Baqarah —
-    // so only carry it over when the Surah is unchanged.
-    final bool keepBookmark =
-        existing != null && existing.selectedSurahIndex == _selectedSurahIndex;
-
     final AlarmModel alarm = AlarmModel(
       id: existing?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
       hour: _selectedTime.hour,
       minute: _selectedTime.minute,
       daysOfWeek: _selectedDays.toList()..sort(),
       isEnabled: existing?.isEnabled ?? true,
-      selectedSurahIndex: _selectedSurahIndex,
+      selectedSurahIndex: surah.id,
       numberOfAyahs: _numberOfAyahs,
       difficultyLevel: _difficultyLevel,
-      currentBookmarkAyah: keepBookmark ? existing.currentBookmarkAyah : 1,
+      currentBookmarkAyah: _selectedStartingAyah,
     );
 
     await ref.read(databaseServiceProvider).saveAlarm(alarm);
@@ -138,6 +178,24 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
   @override
   Widget build(BuildContext context) {
     final bool isEditing = widget.existingAlarm != null;
+    final List<Surah> allSurahs = ref.watch(quranRepositoryProvider).allSurahs;
+    final Surah? surah = _selectedSurah;
+
+    if (allSurahs.isEmpty || surah == null) {
+      return Scaffold(
+        appBar: AppBar(title: Text(isEditing ? 'Edit Alarm' : 'New Alarm')),
+        body: const Center(
+          child: Padding(
+            padding: EdgeInsets.all(32.0),
+            child: Text(
+              'The Quran dataset failed to load, so a Surah can\'t be '
+              'selected. Restart the app to try again.',
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(title: Text(isEditing ? 'Edit Alarm' : 'New Alarm')),
@@ -157,16 +215,31 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
             const SizedBox(height: 24),
             Text('Surah', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 12),
-            _SurahPicker(
-              selectedIndex: _selectedSurahIndex,
+            _SurahDropdown(
+              allSurahs: allSurahs,
+              selected: surah,
               onSelected: _selectSurah,
+            ),
+            const SizedBox(height: 24),
+            Text('Starting Ayah', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            Text(
+              'The specific verse this alarm challenges you to recite from.',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 12),
+            _AyahNumberDropdown(
+              key: ValueKey(surah.id),
+              totalVerses: surah.totalVerses,
+              selected: _selectedStartingAyah,
+              onSelected: _selectStartingAyah,
             ),
             const SizedBox(height: 24),
             Text('Ayahs to Recite', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 12),
             _AyahCountStepper(
               count: _numberOfAyahs,
-              maxCount: _selectedSurah.ayahCount,
+              maxCount: surah.totalVerses,
               onAdjust: _adjustAyahCount,
             ),
             const SizedBox(height: 24),
@@ -293,25 +366,78 @@ class _DayToggle extends StatelessWidget {
   }
 }
 
-class _SurahPicker extends StatelessWidget {
-  final int selectedIndex;
+/// Searchable, scrollable Surah selector — a Material 3 [DropdownMenu]
+/// covering the full 114-Surah catalog. Typing filters the list by its
+/// displayed label (id, transliteration, Arabic name, or Ayah count all
+/// match), and the menu itself scrolls rather than trying to lay out all
+/// 114 entries at once.
+class _SurahDropdown extends StatelessWidget {
+  final List<Surah> allSurahs;
+  final Surah selected;
   final void Function(Surah surah) onSelected;
 
-  const _SurahPicker({required this.selectedIndex, required this.onSelected});
+  const _SurahDropdown({
+    required this.allSurahs,
+    required this.selected,
+    required this.onSelected,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: starterSurahCatalog.map((surah) {
-        final bool isSelected = surah.index == selectedIndex;
-        return ChoiceChip(
-          label: Text('${surah.index}. ${surah.englishName}'),
-          selected: isSelected,
-          onSelected: (_) => onSelected(surah),
-        );
-      }).toList(),
+    return DropdownMenu<Surah>(
+      width: MediaQuery.of(context).size.width - 48,
+      menuHeight: 420,
+      enableFilter: true,
+      enableSearch: true,
+      label: const Text('Surah'),
+      initialSelection: selected,
+      dropdownMenuEntries: allSurahs
+          .map((surah) => DropdownMenuEntry<Surah>(
+                value: surah,
+                label: '${surah.id}. ${surah.transliteration} (${surah.name}) - '
+                    '${surah.totalVerses} Ayahs',
+              ))
+          .toList(),
+      onSelected: (Surah? value) {
+        if (value != null) onSelected(value);
+      },
+    );
+  }
+}
+
+/// Dependent dropdown populated from the selected Surah's [totalVerses] —
+/// picks the specific starting Ayah number (the "wake-up challenge
+/// verse"). Rebuilt (via the `ValueKey(surah.id)` the caller assigns) any
+/// time the Surah changes, so it never shows stale entries from the
+/// previous Surah's length.
+class _AyahNumberDropdown extends StatelessWidget {
+  final int totalVerses;
+  final int selected;
+  final void Function(int ayahNumber) onSelected;
+
+  const _AyahNumberDropdown({
+    super.key,
+    required this.totalVerses,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownMenu<int>(
+      width: MediaQuery.of(context).size.width - 48,
+      menuHeight: 420,
+      enableFilter: true,
+      enableSearch: true,
+      label: const Text('Starting Ayah'),
+      initialSelection: selected,
+      dropdownMenuEntries: List<DropdownMenuEntry<int>>.generate(
+        totalVerses,
+        (int i) => DropdownMenuEntry<int>(value: i + 1, label: 'Ayah ${i + 1}'),
+      ),
+      onSelected: (int? value) {
+        if (value != null) onSelected(value);
+      },
     );
   }
 }

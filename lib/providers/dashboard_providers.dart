@@ -4,6 +4,8 @@ import '../models/alarm_model.dart';
 import '../models/user_stats_model.dart';
 import 'alarm_state_provider.dart' show databaseServiceProvider;
 
+export 'alarm_state_provider.dart' show quranRepositoryProvider;
+
 /// Reactive view over the alarms persisted in Hive. [refresh] re-reads the
 /// box — call it after any create/edit/delete flow mutates alarms.
 class AlarmListNotifier extends StateNotifier<List<AlarmModel>> {
@@ -44,7 +46,8 @@ final StateNotifierProvider<UserStatsNotifier, UserStatsModel>
   (ref) => UserStatsNotifier(ref),
 );
 
-/// Local UI selection for the Surah picker. Not yet wired to alarm
-/// creation — there's no AlarmCreateScreen yet to consume this.
+/// Local UI selection for the Dashboard's Surah picker — `AlarmCreateScreen`
+/// reads this to default the "Add Alarm" flow's Surah dropdown to whatever
+/// was last tapped on the Dashboard.
 final StateProvider<int?> selectedSurahIndexProvider =
     StateProvider<int?>((ref) => null);

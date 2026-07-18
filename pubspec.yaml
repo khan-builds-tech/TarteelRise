@@ -51,3 +51,4 @@ flutter:
   # Asset management for custom Adhan alarms
   assets:
     - assets/audio/adhan.mp3
+    - assets/data/quran_en.json

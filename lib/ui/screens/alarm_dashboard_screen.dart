@@ -20,6 +20,7 @@ class AlarmDashboardScreen extends ConsumerWidget {
     final List<AlarmModel> alarms = ref.watch(alarmListProvider);
     final UserStatsModel stats = ref.watch(userStatsProvider);
     final int? selectedSurahIndex = ref.watch(selectedSurahIndexProvider);
+    final List<Surah> allSurahs = ref.watch(quranRepositoryProvider).allSurahs;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Tarteel Rise')),
@@ -55,13 +56,13 @@ class AlarmDashboardScreen extends ConsumerWidget {
             const SizedBox(height: 32),
             Text('Select a Surah', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 12),
-            ...starterSurahCatalog.map((surah) => Padding(
+            ...allSurahs.map((surah) => Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: _SurahTile(
                     surah: surah,
-                    isSelected: surah.index == selectedSurahIndex,
-                    onTap: () => ref.read(selectedSurahIndexProvider.notifier).state =
-                        surah.index,
+                    isSelected: surah.id == selectedSurahIndex,
+                    onTap: () =>
+                        ref.read(selectedSurahIndexProvider.notifier).state = surah.id,
                   ),
                 )),
           ],
@@ -297,18 +298,18 @@ class _SurahTile extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${surah.index}. ${surah.englishName}',
+                      '${surah.id}. ${surah.transliteration}',
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                     Text(
-                      '${surah.ayahCount} Ayahs',
+                      '${surah.totalVerses} Ayahs',
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                   ],
                 ),
               ),
               Text(
-                surah.arabicName,
+                surah.name,
                 textDirection: TextDirection.rtl,
                 style: Theme.of(context)
                     .textTheme

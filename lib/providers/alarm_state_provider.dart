@@ -9,6 +9,7 @@ import '../models/alarm_model.dart';
 import '../models/alarm_state_enum.dart';
 import '../services/alarm_hardware_service.dart';
 import '../services/database_service.dart';
+import '../services/quran_repository.dart';
 import '../services/speech_service.dart';
 import '../utils/arabic_utils.dart';
 import '../utils/bookmark_utils.dart';
@@ -29,6 +30,16 @@ final Provider<AlarmHardwareService> alarmHardwareServiceProvider =
 /// app's lifetime (e.g. the ringing -> state-machine bridge).
 final Provider<DatabaseService> databaseServiceProvider =
     Provider<DatabaseService>((ref) => DatabaseService());
+
+/// `main()` reads this via a [ProviderContainer] and awaits
+/// `loadFromAssets()` on it before `runApp()`, exactly like
+/// [databaseServiceProvider] — every other reader (the Surah/Ayah
+/// dropdowns, this notifier's own bookmark advancement, the ringing
+/// listener) can then read [QuranRepository.allSurahs]/`buildSession`
+/// synchronously, since the data is already loaded by the time any
+/// widget exists to ask for it.
+final Provider<QuranRepository> quranRepositoryProvider =
+    Provider<QuranRepository>((ref) => QuranRepository());
 
 /// Match-percentage threshold required to clear each configured difficulty.
 /// Mirrors the Difficulty Matrix in the product spec; unrecognized levels
@@ -90,6 +101,7 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
   final SpeechService speechService;
   final AlarmHardwareService alarmHardwareService;
   final DatabaseService databaseService;
+  final QuranRepository quranRepository;
 
   /// If the user doesn't reach `completed` within this long after starting
   /// to recite, the Adhan resumes and the session drops back to `ringing`.
@@ -132,6 +144,7 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     required this.speechService,
     required this.alarmHardwareService,
     required this.databaseService,
+    required this.quranRepository,
     this.resumeGracePeriod = const Duration(minutes: 4),
   }) : super(const AlarmSessionState());
 
@@ -533,26 +546,26 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
   /// (unchanged since [triggerAlarmSession], since bookmark advancement
   /// was deliberately removed from the ring-time content resolver).
   ///
-  /// Deliberately uses the Surah's real ayah count from the catalog
+  /// Deliberately just looks up the Surah's `totalVerses` metadata
   /// directly, rather than going through [QuranRepository.buildSession] —
-  /// that silently substitutes Al-Fatiha for a Surah with no verse text
-  /// seeded yet, which would advance the bookmark relative to Al-Fatiha's
-  /// length instead of the Surah actually selected.
+  /// this needs the Surah's real length to compute wrap-around, not its
+  /// Ayah text, and `buildSession` falls back to Al-Fatiha's length if
+  /// [alarm]'s Surah somehow isn't loaded, which would advance the
+  /// bookmark relative to the wrong Surah entirely.
   Future<void> _advanceBookmark(AlarmModel alarm) async {
-    final Surah surah = starterSurahCatalog.firstWhere(
-      (candidate) => candidate.index == alarm.selectedSurahIndex,
-      orElse: () => starterSurahCatalog.first,
-    );
+    final Surah surah = quranRepository.surahById(alarm.selectedSurahIndex) ??
+        quranRepository.surahById(1) ??
+        const Surah(id: 1, name: '', transliteration: '', translation: '', totalVerses: 7);
 
     final List<int> ayahNumbers = ayahNumbersForSession(
-      startAyah: alarm.currentBookmarkAyah.clamp(1, surah.ayahCount),
+      startAyah: alarm.currentBookmarkAyah.clamp(1, surah.totalVerses),
       requestedCount: alarm.numberOfAyahs,
-      totalAyahsInSurah: surah.ayahCount,
+      totalAyahsInSurah: surah.totalVerses,
     );
 
     alarm.currentBookmarkAyah = computeNextBookmark(
       lastAyahRead: ayahNumbers.last,
-      totalAyahsInSurah: surah.ayahCount,
+      totalAyahsInSurah: surah.totalVerses,
     );
     await databaseService.saveAlarm(alarm);
   }
@@ -643,5 +656,6 @@ final StateNotifierProvider<AlarmStateNotifier, AlarmSessionState>
     speechService: ref.watch(speechServiceProvider),
     alarmHardwareService: ref.watch(alarmHardwareServiceProvider),
     databaseService: ref.watch(databaseServiceProvider),
+    quranRepository: ref.watch(quranRepositoryProvider),
   ),
 );

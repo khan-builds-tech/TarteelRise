@@ -32,6 +32,10 @@ void main() {
     await container
         .read(databaseServiceProvider)
         .init(testHiveDirectoryPath: tempHiveDir.path);
+    // AlarmCreateScreen's Surah dropdown needs this loaded — without it,
+    // `allSurahs` is empty and the screen shows its "dataset failed to
+    // load" fallback instead of the form.
+    await container.read(quranRepositoryProvider).loadFromAssets();
   });
 
   tearDown(() {
