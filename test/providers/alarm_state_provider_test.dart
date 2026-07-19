@@ -6,7 +6,6 @@ import 'package:tarteel_rise/models/alarm_state_enum.dart';
 import 'package:tarteel_rise/providers/alarm_state_provider.dart';
 import 'package:tarteel_rise/services/alarm_hardware_service.dart';
 import 'package:tarteel_rise/services/database_service.dart';
-import 'package:tarteel_rise/services/quran_repository.dart';
 import 'package:tarteel_rise/services/speech_service.dart';
 
 const String _alFatihaAyahsOneAndTwo =
@@ -78,14 +77,8 @@ class _FakeSpeechService extends SpeechService {
 }
 
 void main() {
-  // `QuranRepository.loadFromAssets` (via `rootBundle.loadString`) needs
-  // the Flutter test binding — plain `test()` (unlike `testWidgets()`)
-  // doesn't set this up automatically.
-  TestWidgetsFlutterBinding.ensureInitialized();
-
   late Directory tempHiveDir;
   late DatabaseService databaseService;
-  late QuranRepository quranRepository;
 
   AlarmStateNotifier buildNotifier({
     Duration? resumeGracePeriod,
@@ -97,7 +90,6 @@ void main() {
       alarmHardwareService: alarmHardwareService ??
           AlarmHardwareService(nativeCallTimeout: const Duration(milliseconds: 50)),
       databaseService: databaseService,
-      quranRepository: quranRepository,
       resumeGracePeriod: resumeGracePeriod ?? const Duration(minutes: 4),
     );
     // Reset to a clean `idle` state so each test drives the machine from
@@ -106,16 +98,8 @@ void main() {
     return notifier;
   }
 
-  setUpAll(() async {
-    // Loaded once for the whole file — `_advanceBookmark` needs real
-    // Surah metadata (Al-Fatiha's real length) to compute wrap-around,
-    // and re-parsing the ~2.3MB dataset per test would be wasteful.
-    quranRepository = QuranRepository();
-    await quranRepository.loadFromAssets();
-  });
-
   setUp(() async {
-    tempHiveDir = Directory.systemTemp.createTempSync('bookmark_timing_test_hive');
+    tempHiveDir = Directory.systemTemp.createTempSync('alarm_state_test_hive');
     databaseService = DatabaseService();
     await databaseService.init(testHiveDirectoryPath: tempHiveDir.path);
   });
@@ -124,17 +108,15 @@ void main() {
     tempHiveDir.deleteSync(recursive: true);
   });
 
-  AlarmModel buildAlFatihaAlarm({int currentBookmarkAyah = 1}) {
+  AlarmModel buildAlFatihaAlarm() {
     return AlarmModel(
-      id: 'bookmark-test-alarm',
+      id: 'test-alarm',
       hour: 5,
       minute: 30,
       daysOfWeek: const [],
       isEnabled: true,
-      selectedSurahIndex: 1, // Al-Fatiha: 7 ayahs, real seeded verse text.
-      numberOfAyahs: 2,
+      selectedSurahIndex: 1,
       difficultyLevel: 'easy',
-      currentBookmarkAyah: currentBookmarkAyah,
     );
   }
 
@@ -178,17 +160,12 @@ void main() {
     await beginReciting(notifier);
     await notifier.processSpeechInput(_alFatihaAyahsOneAndTwo);
 
+    // Only the Arabic half of the flow has cleared.
     expect(notifier.state.state, AlarmStateEnum.recitingTranslation);
-
-    // Neither the streak nor the bookmark should move yet — only the
-    // Arabic half of the flow has cleared.
-    final AlarmModel persisted =
-        databaseService.getAllAlarms().firstWhere((a) => a.id == alarm.id);
-    expect(persisted.currentBookmarkAyah, 1);
   });
 
   test(
-    'advances the bookmark and records the streak only after BOTH the Ayah and its translation clear',
+    'reaches completed only after BOTH the Ayah and its translation clear',
     () async {
       final AlarmStateNotifier notifier = buildNotifier();
       final AlarmModel alarm = buildAlFatihaAlarm();
@@ -200,15 +177,10 @@ void main() {
       await notifier.processTranslationSpeechInput(_placeholderTranslation);
 
       expect(notifier.state.state, AlarmStateEnum.completed);
-
-      final AlarmModel persisted =
-          databaseService.getAllAlarms().firstWhere((a) => a.id == alarm.id);
-      // Started at ayah 1, read 2 ayahs (1-2), should resume from ayah 3.
-      expect(persisted.currentBookmarkAyah, 3);
     },
   );
 
-  test('leaves the bookmark untouched when the Arabic is never recognized', () async {
+  test('stays in reciting when the Arabic is never recognized', () async {
     final AlarmStateNotifier notifier = buildNotifier();
     final AlarmModel alarm = buildAlFatihaAlarm();
     await databaseService.saveAlarm(alarm);
@@ -218,9 +190,6 @@ void main() {
     await notifier.processSpeechInput('completely unrelated speech');
 
     expect(notifier.state.state, AlarmStateEnum.reciting);
-    final AlarmModel persisted =
-        databaseService.getAllAlarms().firstWhere((a) => a.id == alarm.id);
-    expect(persisted.currentBookmarkAyah, 1);
   });
 
   test(
@@ -300,7 +269,7 @@ void main() {
   );
 
   test(
-    'leaves the bookmark untouched when the Ayah clears but the translation never does',
+    'stays in recitingTranslation when the Ayah clears but the translation never does',
     () async {
       final AlarmStateNotifier notifier = buildNotifier();
       final AlarmModel alarm = buildAlFatihaAlarm();
@@ -312,13 +281,10 @@ void main() {
       await notifier.processTranslationSpeechInput('completely unrelated speech');
 
       expect(notifier.state.state, AlarmStateEnum.recitingTranslation);
-      final AlarmModel persisted =
-          databaseService.getAllAlarms().firstWhere((a) => a.id == alarm.id);
-      expect(persisted.currentBookmarkAyah, 1);
     },
   );
 
-  test('leaves the bookmark untouched on an Emergency Snooze', () async {
+  test('Emergency Snooze completes the session right from ringing, without reciting', () async {
     final AlarmStateNotifier notifier = buildNotifier();
     final AlarmModel alarm = buildAlFatihaAlarm();
     await databaseService.saveAlarm(alarm);
@@ -329,9 +295,8 @@ void main() {
         await notifier.submitEmergencyTranslationFallback(_placeholderTranslation);
 
     expect(accepted, isTrue);
-    final AlarmModel persisted =
-        databaseService.getAllAlarms().firstWhere((a) => a.id == alarm.id);
-    expect(persisted.currentBookmarkAyah, 1);
+    expect(notifier.state.state, AlarmStateEnum.completed);
+    expect(notifier.state.session?.completedViaEmergencyFallback, isTrue);
   });
 
   test('Emergency Snooze also works during the translation-recitation phase', () async {
@@ -350,25 +315,6 @@ void main() {
     expect(accepted, isTrue);
     expect(notifier.state.state, AlarmStateEnum.completed);
     expect(notifier.state.session?.completedViaEmergencyFallback, isTrue);
-  });
-
-  test('wraps the bookmark back to 1 once the Surah is exhausted', () async {
-    final AlarmStateNotifier notifier = buildNotifier();
-    final AlarmModel alarm = buildAlFatihaAlarm(currentBookmarkAyah: 6);
-    await databaseService.saveAlarm(alarm);
-
-    const String ayahsSixAndSeven =
-        'اهْدِنَا الصِّرَاطَ الْمُسْتَقِيمَ صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ';
-
-    notifier.triggerAlarmSession(alarm, ayahsSixAndSeven, _placeholderTranslation);
-    await beginReciting(notifier);
-    await notifier.processSpeechInput(ayahsSixAndSeven);
-    await notifier.processTranslationSpeechInput(_placeholderTranslation);
-
-    final AlarmModel persisted =
-        databaseService.getAllAlarms().firstWhere((a) => a.id == alarm.id);
-    // Started at ayah 6 (of 7), requested 2 -> clamped to [6, 7] -> wraps to 1.
-    expect(persisted.currentBookmarkAyah, 1);
   });
 
   test(

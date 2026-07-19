@@ -1,41 +1,50 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
 import '../data/quran_verses.dart';
 import '../data/surah_catalog.dart';
-import '../utils/bookmark_utils.dart';
+import '../utils/ayah_selection_utils.dart';
 
-/// One recitation session's worth of Ayah content, plus where the Surah's
-/// bookmark should move to for next time.
+/// One recitation session's worth of Ayah content: a single verse, chosen
+/// as this alarm's wake-up challenge (see [QuranRepository.buildRandomChallenge]).
 class QuranSession {
   final String arabicText;
   final String translation;
-  final int nextBookmarkAyah;
 
   const QuranSession({
     required this.arabicText,
     required this.translation,
-    required this.nextBookmarkAyah,
   });
 }
 
 /// Loads the full 114-Surah Quran dataset (Arabic text + English
 /// translation, per Ayah) from `assets/data/quran_en.json` once at app
-/// launch, and serves Ayah content + Smart Bookmarking progression (spec
-/// Section 4) from that in-memory cache thereafter.
+/// launch, and serves Ayah content from that in-memory cache thereafter.
 ///
 /// [loadFromAssets] must be awaited once during app bootstrap (see
 /// `main()`, alongside `DatabaseService.init`/
 /// `AlarmHardwareService.initializeHardware`) before [allSurahs] or
-/// [buildSession] are used — both are plain synchronous reads afterwards,
-/// with no per-call asset access.
+/// [buildRandomChallenge] are used — both are plain synchronous reads
+/// afterwards, with no per-call asset access.
 class QuranRepository {
   static const String _assetPath = 'assets/data/quran_en.json';
 
+  /// A challenge verse is only ever picked from ayahs at or under this
+  /// word count — short enough to recite right after waking up.
+  static const int maxChallengeAyahWords = 10;
+
+  final Random _random;
+
   List<Surah> _surahs = const <Surah>[];
   Map<int, List<AyahRecord>> _versesBySurahId = const <int, List<AyahRecord>>{};
+
+  /// [random] is injectable so tests can seed it for deterministic
+  /// challenge-verse selection; production code should just use the
+  /// default.
+  QuranRepository({Random? random}) : _random = random ?? Random();
 
   /// All 114 Surahs, in Quran order, once [loadFromAssets] has completed.
   /// Empty until then (or if it failed).
@@ -51,9 +60,9 @@ class QuranRepository {
   /// initialization it sits alongside in `main()`.
   ///
   /// Fails safe: a missing/corrupt asset is caught and logged rather than
-  /// thrown, leaving [allSurahs] empty and [buildSession] falling back to
-  /// its own safe default — a data problem must never crash the alarm
-  /// flow the way a real hardware fault mustn't either.
+  /// thrown, leaving [allSurahs] empty and [buildRandomChallenge] falling
+  /// back to its own safe default — a data problem must never crash the
+  /// alarm flow the way a real hardware fault mustn't either.
   Future<void> loadFromAssets() async {
     try {
       final String raw = await rootBundle.loadString(_assetPath);
@@ -98,19 +107,18 @@ class QuranRepository {
   List<AyahRecord> versesFor(int surahId) =>
       _versesBySurahId[surahId] ?? const <AyahRecord>[];
 
-  /// Builds the session for [surahIndex], reciting up to
-  /// [requestedAyahCount] ayahs starting at [startAyah].
+  /// Picks a single random Ayah from Surah [surahIndex] to be this alarm's
+  /// wake-up challenge verse — via rejection sampling, re-rolling until
+  /// one is found at or under [maxChallengeAyahWords] words (see
+  /// [pickRandomIndexWithinWordLimit]), so the user is never handed a long
+  /// passage to recite straight out of bed.
   ///
   /// Falls back to Al-Fatiha (Surah 1) if [surahIndex] has no verse data —
   /// only reachable if [loadFromAssets] hasn't run yet or the asset failed
   /// to parse, since every Surah 1-114 is otherwise covered. Showing an
   /// empty Ayah card would leave the user with nothing to recite and no
   /// way to dismiss the alarm, which is worse than a real, complete Surah.
-  QuranSession buildSession({
-    required int surahIndex,
-    required int startAyah,
-    required int requestedAyahCount,
-  }) {
+  QuranSession buildRandomChallenge({required int surahIndex}) {
     final Surah? surah = surahById(surahIndex);
     final List<AyahRecord> verses = versesFor(surahIndex);
 
@@ -120,29 +128,21 @@ class QuranRepository {
         '(has loadFromAssets completed?) — falling back to Al-Fatiha.',
       );
       if (surahIndex != 1) {
-        return buildSession(surahIndex: 1, startAyah: 1, requestedAyahCount: requestedAyahCount);
+        return buildRandomChallenge(surahIndex: 1);
       }
       // Even Al-Fatiha isn't loaded — the asset itself failed. Nothing
       // safe to show; empty text at least can't crash the ringing flow.
-      return const QuranSession(arabicText: '', translation: '', nextBookmarkAyah: 1);
+      return const QuranSession(arabicText: '', translation: '');
     }
 
-    final List<int> ayahNumbers = ayahNumbersForSession(
-      startAyah: startAyah.clamp(1, surah.totalVerses),
-      requestedCount: requestedAyahCount,
-      totalAyahsInSurah: surah.totalVerses,
+    final List<int> wordCounts = verses.map((verse) => wordCount(verse.text)).toList();
+    final int index = pickRandomIndexWithinWordLimit(
+      wordCounts: wordCounts,
+      maxWords: maxChallengeAyahWords,
+      random: _random,
     );
+    final AyahRecord chosen = verses[index];
 
-    final List<AyahRecord> selected =
-        ayahNumbers.map((number) => verses.firstWhere((verse) => verse.id == number)).toList();
-
-    return QuranSession(
-      arabicText: selected.map((verse) => verse.text).join(' '),
-      translation: selected.map((verse) => verse.translation).join(' '),
-      nextBookmarkAyah: computeNextBookmark(
-        lastAyahRead: ayahNumbers.last,
-        totalAyahsInSurah: surah.totalVerses,
-      ),
-    );
+    return QuranSession(arabicText: chosen.text, translation: chosen.translation);
   }
 }

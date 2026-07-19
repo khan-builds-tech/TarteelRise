@@ -45,9 +45,3 @@ final StateNotifierProvider<UserStatsNotifier, UserStatsModel>
     StateNotifierProvider<UserStatsNotifier, UserStatsModel>(
   (ref) => UserStatsNotifier(ref),
 );
-
-/// Local UI selection for the Dashboard's Surah picker — `AlarmCreateScreen`
-/// reads this to default the "Add Alarm" flow's Surah dropdown to whatever
-/// was last tapped on the Dashboard.
-final StateProvider<int?> selectedSurahIndexProvider =
-    StateProvider<int?>((ref) => null);

@@ -2,7 +2,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../data/surah_catalog.dart';
 import '../../models/alarm_model.dart';
 import '../../models/user_stats_model.dart';
 import '../../providers/alarm_state_provider.dart';
@@ -10,8 +9,9 @@ import '../../providers/dashboard_providers.dart';
 import '../../theme/app_theme.dart';
 import 'alarm_create_screen.dart';
 
-/// Home screen: shows the user's saved alarms, a Surah picker, and their
-/// daily streak, and is the entry point to [AlarmCreateScreen].
+/// Home screen: shows the user's saved alarms and their daily streak, and
+/// is the entry point to [AlarmCreateScreen]. Surah selection lives
+/// entirely in [AlarmCreateScreen] — there's no separate picker here.
 class AlarmDashboardScreen extends ConsumerWidget {
   const AlarmDashboardScreen({super.key});
 
@@ -19,8 +19,6 @@ class AlarmDashboardScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final List<AlarmModel> alarms = ref.watch(alarmListProvider);
     final UserStatsModel stats = ref.watch(userStatsProvider);
-    final int? selectedSurahIndex = ref.watch(selectedSurahIndexProvider);
-    final List<Surah> allSurahs = ref.watch(quranRepositoryProvider).allSurahs;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Tarteel Rise')),
@@ -53,18 +51,6 @@ class AlarmDashboardScreen extends ConsumerWidget {
                     padding: const EdgeInsets.only(bottom: 12),
                     child: _AlarmCard(alarm: alarm),
                   )),
-            const SizedBox(height: 32),
-            Text('Select a Surah', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 12),
-            ...allSurahs.map((surah) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: _SurahTile(
-                    surah: surah,
-                    isSelected: surah.id == selectedSurahIndex,
-                    onTap: () =>
-                        ref.read(selectedSurahIndexProvider.notifier).state = surah.id,
-                  ),
-                )),
           ],
         ),
       ),
@@ -194,7 +180,6 @@ class _AlarmCard extends ConsumerWidget {
                     const SizedBox(height: 4),
                     Text(
                       '${_formatDaysOfWeek(alarm.daysOfWeek)} · '
-                      '${alarm.numberOfAyahs} Ayah${alarm.numberOfAyahs == 1 ? '' : 's'} · '
                       '${_capitalize(alarm.difficultyLevel)}',
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
@@ -262,68 +247,5 @@ class _AlarmCard extends ConsumerWidget {
   static String _capitalize(String value) {
     if (value.isEmpty) return value;
     return value[0].toUpperCase() + value.substring(1);
-  }
-}
-
-class _SurahTile extends StatelessWidget {
-  final Surah surah;
-  final bool isSelected;
-  final VoidCallback onTap;
-
-  const _SurahTile({
-    required this.surah,
-    required this.isSelected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24),
-        side: BorderSide(
-          color: isSelected ? AppColors.accentEmerald : Colors.transparent,
-          width: 2,
-        ),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(24),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '${surah.id}. ${surah.transliteration}',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    Text(
-                      '${surah.totalVerses} Ayahs',
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                  ],
-                ),
-              ),
-              Text(
-                surah.name,
-                textDirection: TextDirection.rtl,
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w500),
-              ),
-              if (isSelected) ...[
-                const SizedBox(width: 12),
-                const Icon(Icons.check_circle, color: AppColors.accentEmerald),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }

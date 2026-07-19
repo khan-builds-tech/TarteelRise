@@ -86,14 +86,11 @@ void main() {
 
       expect(find.text('New Alarm'), findsOneWidget);
 
-      // The form is long enough to overflow the test viewport, and
-      // ListView only builds visible children, so the Save button isn't
-      // in the tree until scrolled into view.
-      await tester.dragUntilVisible(
-        find.text('Save Alarm'),
-        find.byType(ListView),
-        const Offset(0, -200),
-      );
+      // The form may overflow the test viewport depending on platform text
+      // scaling; `ensureVisible` computes the exact scroll needed rather
+      // than a fixed drag offset that can overshoot on a shorter form.
+      await tester.ensureVisible(find.text('Save Alarm'));
+      await tester.pump();
       // Saving does a real Hive disk write, which needs the real event
       // loop to complete — `testWidgets` runs in a fake-async zone that
       // doesn't service real I/O callbacks on its own, so without
@@ -114,7 +111,6 @@ void main() {
       expect(find.text('New Alarm'), findsNothing);
       expect(find.text('No alarms yet.'), findsNothing);
       expect(find.textContaining('Every day'), findsOneWidget);
-      expect(find.textContaining('3 Ayahs'), findsOneWidget);
     },
   );
 
@@ -129,7 +125,6 @@ void main() {
               daysOfWeek: const [],
               isEnabled: true,
               selectedSurahIndex: 1,
-              numberOfAyahs: 3,
               difficultyLevel: 'medium',
             ),
           );
@@ -148,20 +143,15 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
 
       expect(find.text('Edit Alarm'), findsOneWidget);
+      expect(find.text('Medium'), findsOneWidget);
 
-      await tester.dragUntilVisible(
-        find.byIcon(Icons.add_circle_outline),
-        find.byType(ListView),
-        const Offset(0, -200),
-      );
-      await tester.tap(find.byIcon(Icons.add_circle_outline));
+      await tester.ensureVisible(find.text('Hard'));
+      await tester.pump();
+      await tester.tap(find.text('Hard'));
       await tester.pump();
 
-      await tester.dragUntilVisible(
-        find.text('Save Changes'),
-        find.byType(ListView),
-        const Offset(0, -200),
-      );
+      await tester.ensureVisible(find.text('Save Changes'));
+      await tester.pump();
       await tester.runAsync(() async {
         await tester.tap(find.text('Save Changes'));
         await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -173,7 +163,11 @@ void main() {
       // Same alarm updated in place, not a second one created alongside it.
       expect(container.read(alarmListProvider).length, 1);
       expect(find.text('05:30'), findsOneWidget);
-      expect(find.textContaining('4 Ayahs'), findsOneWidget);
+      final AlarmModel persisted = container
+          .read(databaseServiceProvider)
+          .getAllAlarms()
+          .firstWhere((a) => a.id == 'edit-test-alarm');
+      expect(persisted.difficultyLevel, 'hard');
     },
   );
 

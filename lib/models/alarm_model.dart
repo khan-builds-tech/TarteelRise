@@ -23,16 +23,7 @@ class AlarmModel extends HiveObject {
   int selectedSurahIndex;
 
   @HiveField(6)
-  int numberOfAyahs;
-
-  @HiveField(7)
   String difficultyLevel;
-
-  /// Smart Bookmarking (spec Section 4): the ayah to resume this alarm's
-  /// Surah from next time. Advances by [numberOfAyahs] after each ringing
-  /// session, wrapping back to 1 once the Surah is exhausted.
-  @HiveField(8)
-  int currentBookmarkAyah;
 
   AlarmModel({
     required this.id,
@@ -41,8 +32,6 @@ class AlarmModel extends HiveObject {
     required this.daysOfWeek,
     required this.isEnabled,
     required this.selectedSurahIndex,
-    this.numberOfAyahs = 3,
     this.difficultyLevel = 'medium',
-    this.currentBookmarkAyah = 1,
   });
 }

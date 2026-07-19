@@ -57,20 +57,15 @@ Future<void> main() async {
   );
 }
 
-/// Looks up this session's Ayah content from [quranRepository] — Surah +
-/// bookmark from [alarm]. Deliberately does NOT advance the bookmark here:
-/// that only happens once [AlarmStateNotifier] confirms a validated
-/// recitation, so a missed or failed morning re-reads the same ayahs
-/// tomorrow instead of silently skipping ahead.
+/// Looks up this session's Ayah content from [quranRepository]: a fresh
+/// random, short (see `QuranRepository.maxChallengeAyahWords`) verse from
+/// [alarm]'s chosen Surah, picked anew every time the alarm rings.
 Future<AyahContent> _resolveAyahContent(
   AlarmModel alarm,
   QuranRepository quranRepository,
 ) async {
-  final QuranSession session = quranRepository.buildSession(
-    surahIndex: alarm.selectedSurahIndex,
-    startAyah: alarm.currentBookmarkAyah,
-    requestedAyahCount: alarm.numberOfAyahs,
-  );
+  final QuranSession session =
+      quranRepository.buildRandomChallenge(surahIndex: alarm.selectedSurahIndex);
 
   return AyahContent(arabicText: session.arabicText, translation: session.translation);
 }

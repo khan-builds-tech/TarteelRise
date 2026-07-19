@@ -11,6 +11,10 @@ import '../../theme/app_theme.dart';
 /// [existingAlarm] — persists it via `DatabaseService.saveAlarm`, and
 /// schedules it via `AlarmHardwareService.scheduleMorningAlarm`, tying
 /// together the storage and hardware layers built in earlier phases.
+///
+/// The user only ever picks a Surah and a difficulty here — which specific
+/// Ayah gets recited is decided fresh every time the alarm actually rings
+/// (see `QuranRepository.buildRandomChallenge`), not at creation time.
 class AlarmCreateScreen extends ConsumerStatefulWidget {
   /// Null for the "Add Alarm" flow. Non-null when reached by tapping an
   /// existing alarm on the dashboard to edit it — [_AlarmCreateScreenState]
@@ -37,15 +41,6 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
   /// it once the form is actually showing.
   Surah? _selectedSurah;
 
-  /// The specific Ayah number this alarm starts reciting from — the
-  /// user's chosen "wake-up challenge verse". Persisted as
-  /// [AlarmModel.currentBookmarkAyah]; Smart Bookmarking then advances it
-  /// automatically after each validated recitation, same as before, just
-  /// now with an explicit, user-editable starting point instead of always
-  /// defaulting silently to 1.
-  late int _selectedStartingAyah;
-
-  late int _numberOfAyahs;
   String _difficultyLevel = 'medium';
   bool _isSaving = false;
 
@@ -60,26 +55,10 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
       _selectedTime = TimeOfDay(hour: existing.hour, minute: existing.minute);
       _selectedDays.addAll(existing.daysOfWeek);
       _selectedSurah = _findSurah(allSurahs, existing.selectedSurahIndex) ?? _firstOrNull(allSurahs);
-      _numberOfAyahs = existing.numberOfAyahs;
       _difficultyLevel = existing.difficultyLevel;
-      _selectedStartingAyah = existing.currentBookmarkAyah;
     } else {
       _selectedTime = TimeOfDay.now();
-      _numberOfAyahs = 3;
-      _selectedStartingAyah = 1;
-      // Pre-fill from whatever the Dashboard's Surah picker was last set
-      // to, so tapping a Surah there then "Add Alarm" here feels connected.
-      final int? preselectedId = ref.read(selectedSurahIndexProvider);
-      _selectedSurah = (preselectedId == null ? null : _findSurah(allSurahs, preselectedId)) ??
-          _firstOrNull(allSurahs);
-    }
-
-    // Defensive clamp — guards against persisted data (or a pre-selected
-    // id) referencing an Ayah number outside this Surah's real range.
-    final Surah? surah = _selectedSurah;
-    if (surah != null) {
-      _numberOfAyahs = _numberOfAyahs.clamp(1, surah.totalVerses);
-      _selectedStartingAyah = _selectedStartingAyah.clamp(1, surah.totalVerses);
+      _selectedSurah = _firstOrNull(allSurahs);
     }
   }
 
@@ -113,29 +92,7 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
   }
 
   void _selectSurah(Surah surah) {
-    setState(() {
-      _selectedSurah = surah;
-      // A different Surah invalidates both the ayah count and the
-      // starting Ayah if they overran the new Surah's shorter length.
-      if (_numberOfAyahs > surah.totalVerses) {
-        _numberOfAyahs = surah.totalVerses;
-      }
-      if (_selectedStartingAyah > surah.totalVerses) {
-        _selectedStartingAyah = surah.totalVerses;
-      }
-    });
-  }
-
-  void _selectStartingAyah(int ayahNumber) {
-    setState(() => _selectedStartingAyah = ayahNumber);
-  }
-
-  void _adjustAyahCount(int delta) {
-    final Surah? surah = _selectedSurah;
-    if (surah == null) return;
-    setState(() {
-      _numberOfAyahs = (_numberOfAyahs + delta).clamp(1, surah.totalVerses);
-    });
+    setState(() => _selectedSurah = surah);
   }
 
   Future<void> _save() async {
@@ -152,9 +109,7 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
       daysOfWeek: _selectedDays.toList()..sort(),
       isEnabled: existing?.isEnabled ?? true,
       selectedSurahIndex: surah.id,
-      numberOfAyahs: _numberOfAyahs,
       difficultyLevel: _difficultyLevel,
-      currentBookmarkAyah: _selectedStartingAyah,
     );
 
     await ref.read(databaseServiceProvider).saveAlarm(alarm);
@@ -214,33 +169,17 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
             ),
             const SizedBox(height: 24),
             Text('Surah', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            Text(
+              'Each morning picks a fresh, short random Ayah from this Surah '
+              'to challenge you with.',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
             const SizedBox(height: 12),
             _SurahDropdown(
               allSurahs: allSurahs,
               selected: surah,
               onSelected: _selectSurah,
-            ),
-            const SizedBox(height: 24),
-            Text('Starting Ayah', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 8),
-            Text(
-              'The specific verse this alarm challenges you to recite from.',
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 12),
-            _AyahNumberDropdown(
-              key: ValueKey(surah.id),
-              totalVerses: surah.totalVerses,
-              selected: _selectedStartingAyah,
-              onSelected: _selectStartingAyah,
-            ),
-            const SizedBox(height: 24),
-            Text('Ayahs to Recite', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 12),
-            _AyahCountStepper(
-              count: _numberOfAyahs,
-              maxCount: surah.totalVerses,
-              onAdjust: _adjustAyahCount,
             ),
             const SizedBox(height: 24),
             Text('Difficulty', style: Theme.of(context).textTheme.titleLarge),
@@ -401,78 +340,6 @@ class _SurahDropdown extends StatelessWidget {
       onSelected: (Surah? value) {
         if (value != null) onSelected(value);
       },
-    );
-  }
-}
-
-/// Dependent dropdown populated from the selected Surah's [totalVerses] —
-/// picks the specific starting Ayah number (the "wake-up challenge
-/// verse"). Rebuilt (via the `ValueKey(surah.id)` the caller assigns) any
-/// time the Surah changes, so it never shows stale entries from the
-/// previous Surah's length.
-class _AyahNumberDropdown extends StatelessWidget {
-  final int totalVerses;
-  final int selected;
-  final void Function(int ayahNumber) onSelected;
-
-  const _AyahNumberDropdown({
-    super.key,
-    required this.totalVerses,
-    required this.selected,
-    required this.onSelected,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return DropdownMenu<int>(
-      width: MediaQuery.of(context).size.width - 48,
-      menuHeight: 420,
-      enableFilter: true,
-      enableSearch: true,
-      label: const Text('Starting Ayah'),
-      initialSelection: selected,
-      dropdownMenuEntries: List<DropdownMenuEntry<int>>.generate(
-        totalVerses,
-        (int i) => DropdownMenuEntry<int>(value: i + 1, label: 'Ayah ${i + 1}'),
-      ),
-      onSelected: (int? value) {
-        if (value != null) onSelected(value);
-      },
-    );
-  }
-}
-
-class _AyahCountStepper extends StatelessWidget {
-  final int count;
-  final int maxCount;
-  final void Function(int delta) onAdjust;
-
-  const _AyahCountStepper({
-    required this.count,
-    required this.maxCount,
-    required this.onAdjust,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            IconButton(
-              onPressed: count > 1 ? () => onAdjust(-1) : null,
-              icon: const Icon(Icons.remove_circle_outline),
-            ),
-            Text('$count of $maxCount', style: Theme.of(context).textTheme.titleLarge),
-            IconButton(
-              onPressed: count < maxCount ? () => onAdjust(1) : null,
-              icon: const Icon(Icons.add_circle_outline),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

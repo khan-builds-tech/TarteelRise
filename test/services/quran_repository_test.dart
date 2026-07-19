@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tarteel_rise/data/quran_verses.dart';
 import 'package:tarteel_rise/data/surah_catalog.dart';
 import 'package:tarteel_rise/services/quran_repository.dart';
+import 'package:tarteel_rise/utils/ayah_selection_utils.dart';
 
 void main() {
   // `rootBundle.loadString` (inside `loadFromAssets`) needs the Flutter
@@ -45,54 +46,39 @@ void main() {
     });
   });
 
-  group('buildSession', () {
-    test('joins the requested ayah range in order, Arabic and translation', () {
-      // Compares against the repository's own already-parsed cache for
-      // ayahs 1-2, rather than a hand-copied literal — this is testing
-      // buildSession's selection/join/ordering logic, not transcribing
-      // Arabic combining diacritics by hand into Dart source (a real,
-      // easy-to-get-wrong risk that isn't what this test is meant to
-      // catch; the dataset's own religious-text accuracy is out of scope
-      // here).
+  group('buildRandomChallenge', () {
+    test('always returns text belonging to a real verse of the requested Surah', () {
       final List<AyahRecord> verses = repository.versesFor(1);
-      final AyahRecord ayah1 = verses.firstWhere((v) => v.id == 1);
-      final AyahRecord ayah2 = verses.firstWhere((v) => v.id == 2);
+      final Set<String> realArabicTexts = verses.map((v) => v.text).toSet();
+      final Set<String> realTranslations = verses.map((v) => v.translation).toSet();
 
-      final QuranSession session = repository.buildSession(
-        surahIndex: 1,
-        startAyah: 1,
-        requestedAyahCount: 2,
-      );
-
-      expect(session.arabicText, '${ayah1.text} ${ayah2.text}');
-      expect(session.translation, '${ayah1.translation} ${ayah2.translation}');
-      expect(session.nextBookmarkAyah, 3);
+      // Repeated to exercise different random rolls rather than relying
+      // on a single draw.
+      for (int i = 0; i < 30; i++) {
+        final QuranSession session = repository.buildRandomChallenge(surahIndex: 1);
+        expect(realArabicTexts, contains(session.arabicText));
+        expect(realTranslations, contains(session.translation));
+      }
     });
 
-    test('wraps the bookmark back to 1 after the last ayah', () {
-      final QuranSession session = repository.buildSession(
-        surahIndex: 112,
-        startAyah: 3,
-        requestedAyahCount: 2,
-      );
-
-      expect(session.nextBookmarkAyah, 1);
+    test('never returns an ayah longer than maxChallengeAyahWords', () {
+      // Al-Baqarah (286 ayahs) has a wide mix of short and very long
+      // verses — a good stress case for the word-count rejection.
+      for (int i = 0; i < 30; i++) {
+        final QuranSession session = repository.buildRandomChallenge(surahIndex: 2);
+        expect(wordCount(session.arabicText), lessThanOrEqualTo(QuranRepository.maxChallengeAyahWords));
+      }
     });
 
-    test('recites the real text of a long Surah instead of falling back to Al-Fatiha', () {
-      // Al-Baqarah (286 ayahs) had no seeded verse text under the old
-      // static starter catalog, so this used to silently substitute
-      // Al-Fatiha. The full dataset covers it for real now.
-      final AyahRecord baqarahAyah1 = repository.versesFor(2).firstWhere((v) => v.id == 1);
+    test('falls back to Al-Fatiha when the requested Surah has no verse data', () {
+      final QuranRepository unloaded = QuranRepository();
+      // Never awaited loadFromAssets — surahById/versesFor return nothing
+      // for any id, including Al-Fatiha itself, so the safe empty-text
+      // fallback is what's actually reachable here.
+      final QuranSession session = unloaded.buildRandomChallenge(surahIndex: 5);
 
-      final QuranSession session = repository.buildSession(
-        surahIndex: 2,
-        startAyah: 1,
-        requestedAyahCount: 1,
-      );
-
-      expect(session.arabicText, baqarahAyah1.text);
-      expect(session.arabicText, isNot('')); // Never the Al-Fatiha fallback.
+      expect(session.arabicText, '');
+      expect(session.translation, '');
     });
   });
 }

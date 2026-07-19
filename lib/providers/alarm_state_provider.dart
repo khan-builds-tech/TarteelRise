@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../data/surah_catalog.dart';
 import '../models/active_alarm_session.dart';
 import '../models/alarm_model.dart';
 import '../models/alarm_state_enum.dart';
@@ -12,7 +11,6 @@ import '../services/database_service.dart';
 import '../services/quran_repository.dart';
 import '../services/speech_service.dart';
 import '../utils/arabic_utils.dart';
-import '../utils/bookmark_utils.dart';
 import '../utils/translation_match_utils.dart';
 import '../utils/word_match_utils.dart';
 
@@ -101,7 +99,6 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
   final SpeechService speechService;
   final AlarmHardwareService alarmHardwareService;
   final DatabaseService databaseService;
-  final QuranRepository quranRepository;
 
   /// If the user doesn't reach `completed` within this long after starting
   /// to recite, the Adhan resumes and the session drops back to `ringing`.
@@ -144,7 +141,6 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     required this.speechService,
     required this.alarmHardwareService,
     required this.databaseService,
-    required this.quranRepository,
     this.resumeGracePeriod = const Duration(minutes: 4),
   }) : super(const AlarmSessionState());
 
@@ -459,7 +455,6 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
       _cancelResumeTimer();
       await _silenceAlarmOnCompletion(updatedSession.activeAlarm);
       await databaseService.recordSuccessfulRecitation();
-      await _advanceBookmark(updatedSession.activeAlarm);
     }
   }
 
@@ -537,37 +532,6 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     _cancelResumeTimer();
     speechService.stopListening();
     state = state.copyWith(state: AlarmStateEnum.ringing);
-  }
-
-  /// Advances the Surah bookmark only once a recitation is actually
-  /// validated — a missed or failed morning re-reads the same ayahs
-  /// tomorrow rather than silently skipping ahead. Recomputes the range
-  /// from [alarm]'s still-unadvanced [AlarmModel.currentBookmarkAyah]
-  /// (unchanged since [triggerAlarmSession], since bookmark advancement
-  /// was deliberately removed from the ring-time content resolver).
-  ///
-  /// Deliberately just looks up the Surah's `totalVerses` metadata
-  /// directly, rather than going through [QuranRepository.buildSession] —
-  /// this needs the Surah's real length to compute wrap-around, not its
-  /// Ayah text, and `buildSession` falls back to Al-Fatiha's length if
-  /// [alarm]'s Surah somehow isn't loaded, which would advance the
-  /// bookmark relative to the wrong Surah entirely.
-  Future<void> _advanceBookmark(AlarmModel alarm) async {
-    final Surah surah = quranRepository.surahById(alarm.selectedSurahIndex) ??
-        quranRepository.surahById(1) ??
-        const Surah(id: 1, name: '', transliteration: '', translation: '', totalVerses: 7);
-
-    final List<int> ayahNumbers = ayahNumbersForSession(
-      startAyah: alarm.currentBookmarkAyah.clamp(1, surah.totalVerses),
-      requestedCount: alarm.numberOfAyahs,
-      totalAyahsInSurah: surah.totalVerses,
-    );
-
-    alarm.currentBookmarkAyah = computeNextBookmark(
-      lastAyahRead: ayahNumbers.last,
-      totalAyahsInSurah: surah.totalVerses,
-    );
-    await databaseService.saveAlarm(alarm);
   }
 
   /// The Emergency Snooze fallback: typing the English translation instead
@@ -656,6 +620,5 @@ final StateNotifierProvider<AlarmStateNotifier, AlarmSessionState>
     speechService: ref.watch(speechServiceProvider),
     alarmHardwareService: ref.watch(alarmHardwareServiceProvider),
     databaseService: ref.watch(databaseServiceProvider),
-    quranRepository: ref.watch(quranRepositoryProvider),
   ),
 );
