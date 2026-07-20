@@ -12,6 +12,7 @@ import 'services/quran_repository.dart';
 import 'theme/app_theme.dart';
 import 'ui/screens/alarm_active_screen.dart';
 import 'ui/screens/alarm_dashboard_screen.dart';
+import 'ui/screens/streak_success_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -90,17 +91,24 @@ class TarteelRiseApp extends StatelessWidget {
 /// mounted in the tree, so there's no window where a state transition
 /// fires before the app's `Navigator` exists to receive it.
 ///
-/// Whenever the state machine leaves `idle` (a real alarm ringing while the
-/// app sits on the Dashboard, inside a pushed screen, or newly resumed from
-/// the background — all indistinguishable to this listener, since it only
-/// watches the state, never how the app got there) this hard-replaces the
-/// *entire* navigation stack with [AlarmActiveScreen] via
-/// `pushAndRemoveUntil`. That's deliberate, not just a stronger `push`:
-/// leaving a stale Dashboard/Create-alarm screen underneath would let the
-/// system back button pop straight past the recitation requirement. The
-/// reverse transition (session finishes or resets) hard-replaces back to a
-/// fresh [AlarmDashboardScreen] the same way, so the stack never
-/// accumulates alarm-session routes across repeated wake-ups.
+/// Three routing rules, in priority order:
+///  1. Entering `completed` (from any other non-idle state) hard-replaces
+///     the stack with [StreakSuccessScreen] — a dedicated screen, not just
+///     another case inside [AlarmActiveScreen]'s own `switch`, so there is
+///     no route left underneath to accidentally navigate back into once
+///     the recitation flow is actually finished.
+///  2. Leaving `idle` (a real alarm ringing while the app sits on the
+///     Dashboard, inside a pushed screen, or newly resumed from the
+///     background — all indistinguishable to this listener, since it only
+///     watches the state, never how the app got there) hard-replaces the
+///     stack with [AlarmActiveScreen].
+///  3. Returning to `idle` (finished, or reset) hard-replaces the stack
+///     back to a fresh [AlarmDashboardScreen].
+/// All three use `pushAndRemoveUntil`, deliberately, not just a stronger
+/// `push`: leaving a stale Dashboard/Create-alarm/recitation screen
+/// underneath would let the system back button pop straight past the
+/// recitation requirement, and the stack must never accumulate
+/// alarm-session routes across repeated wake-ups.
 class AppNavigationWrapper extends ConsumerWidget {
   const AppNavigationWrapper({super.key});
 
@@ -109,6 +117,16 @@ class AppNavigationWrapper extends ConsumerWidget {
     ref.listen<AlarmStateEnum>(
       alarmStateProvider.select((AlarmSessionState s) => s.state),
       (AlarmStateEnum? previous, AlarmStateEnum next) {
+        if (previous == next) return;
+
+        if (next == AlarmStateEnum.completed && previous != AlarmStateEnum.completed) {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute<void>(builder: (_) => const StreakSuccessScreen()),
+            (Route<void> route) => false,
+          );
+          return;
+        }
+
         final bool wasIdle = previous == null || previous == AlarmStateEnum.idle;
         final bool isIdle = next == AlarmStateEnum.idle;
         if (wasIdle == isIdle) return;

@@ -116,7 +116,6 @@ void main() {
       daysOfWeek: const [],
       isEnabled: true,
       selectedSurahIndex: 1,
-      difficultyLevel: 'easy',
     );
   }
 
@@ -197,13 +196,13 @@ void main() {
     'result (e.g. a pause between words) scores lower or comes back empty',
     () async {
       final AlarmStateNotifier notifier = buildNotifier();
-      final AlarmModel alarm = buildAlFatihaAlarm(); // 'easy' difficulty -> 65% threshold.
+      final AlarmModel alarm = buildAlFatihaAlarm(); // Fixed 80% threshold.
       await databaseService.saveAlarm(alarm);
 
       notifier.triggerAlarmSession(alarm, _alFatihaAyahsOneAndTwo, _placeholderTranslation);
       await beginReciting(notifier);
 
-      // 4 of the Ayah's 8 words -> 50%, below Easy's 65% threshold.
+      // 4 of the Ayah's 8 words -> 50%, below the 80% threshold.
       await notifier.processSpeechInput('بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ');
       expect(notifier.state.state, AlarmStateEnum.reciting);
       expect(notifier.state.session?.currentProgress, 50.0);
@@ -215,12 +214,12 @@ void main() {
       expect(notifier.state.state, AlarmStateEnum.reciting);
       expect(notifier.state.session?.currentProgress, 50.0);
 
-      // 6 of 8 words -> 75%, clears the threshold from the ratcheted peak.
+      // 7 of 8 words -> 87.5%, clears the threshold from the ratcheted peak.
       await notifier.processSpeechInput(
-        'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ',
+        'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ',
       );
       expect(notifier.state.state, AlarmStateEnum.recitingTranslation);
-      expect(notifier.state.session?.currentProgress, 75.0);
+      expect(notifier.state.session?.currentProgress, 87.5);
       // The translation gate's own ratchet starts clean, not inheriting
       // the Arabic gate's peak.
       expect(notifier.state.session?.translationProgress, 0.0);

@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/surah_catalog.dart';
 import '../../models/alarm_model.dart';
 import '../../models/user_stats_model.dart';
 import '../../providers/alarm_state_provider.dart';
@@ -156,6 +157,8 @@ class _AlarmCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final String time =
         '${alarm.hour.toString().padLeft(2, '0')}:${alarm.minute.toString().padLeft(2, '0')}';
+    final Surah? surah =
+        ref.watch(quranRepositoryProvider).surahById(alarm.selectedSurahIndex);
 
     return Card(
       child: InkWell(
@@ -180,7 +183,7 @@ class _AlarmCard extends ConsumerWidget {
                     const SizedBox(height: 4),
                     Text(
                       '${_formatDaysOfWeek(alarm.daysOfWeek)} · '
-                      '${_capitalize(alarm.difficultyLevel)}',
+                      '${surah?.transliteration ?? 'Surah ${alarm.selectedSurahIndex}'}',
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                   ],
@@ -242,10 +245,5 @@ class _AlarmCard extends ConsumerWidget {
         .where((day) => day >= 1 && day <= 7)
         .map((day) => labels[day - 1])
         .join(', ');
-  }
-
-  static String _capitalize(String value) {
-    if (value.isEmpty) return value;
-    return value[0].toUpperCase() + value.substring(1);
   }
 }

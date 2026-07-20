@@ -22,9 +22,6 @@ class AlarmModel extends HiveObject {
   @HiveField(5)
   int selectedSurahIndex;
 
-  @HiveField(6)
-  String difficultyLevel;
-
   AlarmModel({
     required this.id,
     required this.hour,
@@ -32,6 +29,5 @@ class AlarmModel extends HiveObject {
     required this.daysOfWeek,
     required this.isEnabled,
     required this.selectedSurahIndex,
-    this.difficultyLevel = 'medium',
   });
 }

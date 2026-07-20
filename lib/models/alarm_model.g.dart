@@ -23,14 +23,13 @@ class AlarmModelAdapter extends TypeAdapter<AlarmModel> {
       daysOfWeek: (fields[3] as List).cast<int>(),
       isEnabled: fields[4] as bool,
       selectedSurahIndex: fields[5] as int,
-      difficultyLevel: fields[6] as String,
     );
   }
 
   @override
   void write(BinaryWriter writer, AlarmModel obj) {
     writer
-      ..writeByte(7)
+      ..writeByte(6)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -42,9 +41,7 @@ class AlarmModelAdapter extends TypeAdapter<AlarmModel> {
       ..writeByte(4)
       ..write(obj.isEnabled)
       ..writeByte(5)
-      ..write(obj.selectedSurahIndex)
-      ..writeByte(6)
-      ..write(obj.difficultyLevel);
+      ..write(obj.selectedSurahIndex);
   }
 
   @override

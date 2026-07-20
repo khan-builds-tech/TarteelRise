@@ -12,9 +12,11 @@ import '../../theme/app_theme.dart';
 /// schedules it via `AlarmHardwareService.scheduleMorningAlarm`, tying
 /// together the storage and hardware layers built in earlier phases.
 ///
-/// The user only ever picks a Surah and a difficulty here — which specific
-/// Ayah gets recited is decided fresh every time the alarm actually rings
-/// (see `QuranRepository.buildRandomChallenge`), not at creation time.
+/// The user only ever picks a Surah here — which specific Ayah gets
+/// recited is decided fresh every time the alarm actually rings (see
+/// `QuranRepository.buildRandomChallenge`), not at creation time. There is
+/// no per-alarm difficulty level — every recitation gate uses the same
+/// fixed match threshold (`AlarmStateNotifier`'s `_matchThreshold`).
 class AlarmCreateScreen extends ConsumerStatefulWidget {
   /// Null for the "Add Alarm" flow. Non-null when reached by tapping an
   /// existing alarm on the dashboard to edit it — [_AlarmCreateScreenState]
@@ -30,7 +32,6 @@ class AlarmCreateScreen extends ConsumerStatefulWidget {
 
 class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
   static const List<String> _dayLabels = <String>['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-  static const List<String> _difficultyLevels = <String>['easy', 'medium', 'hard'];
 
   late TimeOfDay _selectedTime;
   final Set<int> _selectedDays = <int>{};
@@ -41,7 +42,6 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
   /// it once the form is actually showing.
   Surah? _selectedSurah;
 
-  String _difficultyLevel = 'medium';
   bool _isSaving = false;
 
   @override
@@ -55,7 +55,6 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
       _selectedTime = TimeOfDay(hour: existing.hour, minute: existing.minute);
       _selectedDays.addAll(existing.daysOfWeek);
       _selectedSurah = _findSurah(allSurahs, existing.selectedSurahIndex) ?? _firstOrNull(allSurahs);
-      _difficultyLevel = existing.difficultyLevel;
     } else {
       _selectedTime = TimeOfDay.now();
       _selectedSurah = _firstOrNull(allSurahs);
@@ -109,7 +108,6 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
       daysOfWeek: _selectedDays.toList()..sort(),
       isEnabled: existing?.isEnabled ?? true,
       selectedSurahIndex: surah.id,
-      difficultyLevel: _difficultyLevel,
     );
 
     await ref.read(databaseServiceProvider).saveAlarm(alarm);
@@ -167,7 +165,10 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
               selectedDays: _selectedDays,
               onToggle: _toggleDay,
             ),
-            const SizedBox(height: 24),
+            // Extra breathing room before the Surah section, now that it's
+            // the last input before the Save button rather than one of
+            // several stacked sections.
+            const SizedBox(height: 40),
             Text('Surah', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),
             Text(
@@ -180,14 +181,6 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
               allSurahs: allSurahs,
               selected: surah,
               onSelected: _selectSurah,
-            ),
-            const SizedBox(height: 24),
-            Text('Difficulty', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 12),
-            _DifficultySelector(
-              levels: _difficultyLevels,
-              selected: _difficultyLevel,
-              onSelected: (level) => setState(() => _difficultyLevel = level),
             ),
             const SizedBox(height: 32),
             SizedBox(
@@ -340,32 +333,6 @@ class _SurahDropdown extends StatelessWidget {
       onSelected: (Surah? value) {
         if (value != null) onSelected(value);
       },
-    );
-  }
-}
-
-class _DifficultySelector extends StatelessWidget {
-  final List<String> levels;
-  final String selected;
-  final void Function(String level) onSelected;
-
-  const _DifficultySelector({
-    required this.levels,
-    required this.selected,
-    required this.onSelected,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SegmentedButton<String>(
-      segments: levels
-          .map((level) => ButtonSegment<String>(
-                value: level,
-                label: Text(level[0].toUpperCase() + level.substring(1)),
-              ))
-          .toList(),
-      selected: <String>{selected},
-      onSelectionChanged: (newSelection) => onSelected(newSelection.first),
     );
   }
 }

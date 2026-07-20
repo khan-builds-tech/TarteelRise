@@ -125,7 +125,6 @@ void main() {
               daysOfWeek: const [],
               isEnabled: true,
               selectedSurahIndex: 1,
-              difficultyLevel: 'medium',
             ),
           );
       container.read(alarmListProvider.notifier).refresh();
@@ -136,6 +135,7 @@ void main() {
       await tester.pump();
 
       expect(find.text('05:30'), findsOneWidget);
+      expect(find.textContaining('Every day'), findsOneWidget);
 
       // Tapping the card (not the trailing delete icon) opens it for editing.
       await tester.tap(find.text('05:30'));
@@ -143,11 +143,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
 
       expect(find.text('Edit Alarm'), findsOneWidget);
-      expect(find.text('Medium'), findsOneWidget);
 
-      await tester.ensureVisible(find.text('Hard'));
-      await tester.pump();
-      await tester.tap(find.text('Hard'));
+      // 'M' (Monday) is the only day-of-week toggle with that exact label.
+      await tester.tap(find.text('M'));
       await tester.pump();
 
       await tester.ensureVisible(find.text('Save Changes'));
@@ -167,7 +165,7 @@ void main() {
           .read(databaseServiceProvider)
           .getAllAlarms()
           .firstWhere((a) => a.id == 'edit-test-alarm');
-      expect(persisted.difficultyLevel, 'hard');
+      expect(persisted.daysOfWeek, [1]);
     },
   );
 

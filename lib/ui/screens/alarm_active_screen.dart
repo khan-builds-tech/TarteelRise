@@ -83,8 +83,13 @@ class _AlarmActiveScreenState extends ConsumerState<AlarmActiveScreen>
                   isMicActive: sessionState.isMicActive,
                   speechErrorMessage: sessionState.speechErrorMessage,
                 ),
-              AlarmStateEnum.completed =>
-                _CompletedLayout(session: sessionState.session),
+              // `AppNavigationWrapper` (main.dart) hard-replaces this whole
+              // route with `StreakSuccessScreen` the instant state enters
+              // `completed`, in the same `ref.listen` callback that sets
+              // this state — so this case is only ever transiently
+              // reachable (if reachable at all) for a frame that never
+              // actually gets painted, never a real fallback UI.
+              AlarmStateEnum.completed => const _IdlePlaceholder(),
             },
           ),
         ),
@@ -212,7 +217,7 @@ class _PausedLayout extends ConsumerWidget {
           _SpeechErrorBanner(message: speechErrorMessage!),
         ],
         const Spacer(),
-        _ArabicAyahCard(arabicText: currentSession.currentAyahArabic),
+        ArabicAyahCard(arabicText: currentSession.currentAyahArabic),
         const Spacer(),
         TextButton.icon(
           onPressed: () => ref.read(alarmStateProvider.notifier).resumeAdhanFromReview(),
@@ -347,7 +352,7 @@ class _RecitingLayout extends StatelessWidget {
       children: [
         _MicStatusBanner(isMicActive: isMicActive, speechErrorMessage: speechErrorMessage),
         const Spacer(),
-        _ArabicAyahCard(
+        ArabicAyahCard(
           arabicText: currentSession.currentAyahArabic,
           matchedWordFlags: currentSession.matchedWordFlags,
         ),
@@ -401,7 +406,7 @@ class _RecitingTranslationLayout extends StatelessWidget {
 }
 
 /// Heavily padded card holding the English translation during the
-/// translation-recitation phase — same visual language as [_ArabicAyahCard]
+/// translation-recitation phase — same visual language as [ArabicAyahCard]
 /// but left-to-right and without the Ayah above it, since by this point
 /// the Ayah has already cleared and its card is off-screen.
 class _TranslationCard extends StatelessWidget {
@@ -415,7 +420,7 @@ class _TranslationCard extends StatelessWidget {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(24.0),
-        child: _HighlightedWordText(
+        child: HighlightedWordText(
           text: translation,
           matchedWordFlags: matchedWordFlags,
           style: Theme.of(context).textTheme.headlineMedium!,
@@ -562,58 +567,11 @@ class _MatchProgressTracker extends StatelessWidget {
   }
 }
 
-/// Resets the state machine to `idle`. Navigation back to the dashboard —
-/// and refreshing the streak/alarm-list providers once there — is handled
-/// centrally by `AppNavigationWrapper` (see `main.dart`) reacting to that
-/// state change, not by this screen popping itself.
-void _finishAndReturnToDashboard(WidgetRef ref) {
-  ref.read(alarmStateProvider.notifier).resetToIdle();
-}
-
-class _CompletedLayout extends ConsumerWidget {
-  final ActiveAlarmSession? session;
-
-  const _CompletedLayout({required this.session});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final ActiveAlarmSession? currentSession = session;
-    if (currentSession == null) {
-      return Center(
-        child: _StartYourDayButton(
-          onPressed: () => ref.read(alarmStateProvider.notifier).resetToIdle(),
-        ),
-      );
-    }
-
-    return Column(
-      children: [
-        const SizedBox(height: 16),
-        if (currentSession.completedViaEmergencyFallback) ...[
-          const _EmergencySnoozeBanner(),
-          const SizedBox(height: 16),
-        ],
-        _ArabicAyahCard(
-          arabicText: currentSession.currentAyahArabic,
-          translation: currentSession.currentAyahTranslation,
-          matchedWordFlags: currentSession.matchedWordFlags,
-          translationMatchedWordFlags: currentSession.translationMatchedWordFlags,
-        ),
-        const Spacer(),
-        _StartYourDayButton(
-          onPressed: () => _finishAndReturnToDashboard(ref),
-        ),
-        const SizedBox(height: 16),
-      ],
-    );
-  }
-}
-
 /// Shown on the completed screen when the alarm was silenced via the
 /// Emergency Snooze fallback instead of a validated recitation, so the
 /// user can see plainly that their streak was reset rather than extended.
-class _EmergencySnoozeBanner extends StatelessWidget {
-  const _EmergencySnoozeBanner();
+class EmergencySnoozeBanner extends StatelessWidget {
+  const EmergencySnoozeBanner({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -661,13 +619,14 @@ class _MissingSessionMessage extends StatelessWidget {
 /// When [matchedWordFlags] is non-empty, each word of [arabicText] is
 /// colored individually — emerald once recognized, default otherwise —
 /// as live real-time feedback while the user recites.
-class _ArabicAyahCard extends StatelessWidget {
+class ArabicAyahCard extends StatelessWidget {
   final String arabicText;
   final String? translation;
   final List<bool> matchedWordFlags;
   final List<bool> translationMatchedWordFlags;
 
-  const _ArabicAyahCard({
+  const ArabicAyahCard({
+    super.key,
     required this.arabicText,
     this.translation,
     this.matchedWordFlags = const <bool>[],
@@ -684,7 +643,7 @@ class _ArabicAyahCard extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _HighlightedWordText(
+            HighlightedWordText(
               text: arabicText,
               matchedWordFlags: matchedWordFlags,
               style: AppTextStyles.arabicAyah,
@@ -692,7 +651,7 @@ class _ArabicAyahCard extends StatelessWidget {
             ),
             if (revealedTranslation != null) ...[
               const SizedBox(height: 24),
-              _HighlightedWordText(
+              HighlightedWordText(
                 text: revealedTranslation,
                 matchedWordFlags: translationMatchedWordFlags,
                 style: Theme.of(context).textTheme.bodyLarge!,
@@ -713,13 +672,14 @@ class _ArabicAyahCard extends StatelessWidget {
 /// order); [textDirection] on the enclosing [Text.rich] is what lays that
 /// logical sequence out left-to-right or right-to-left, so the spans
 /// themselves must never be reversed.
-class _HighlightedWordText extends StatelessWidget {
+class HighlightedWordText extends StatelessWidget {
   final String text;
   final List<bool> matchedWordFlags;
   final TextStyle style;
   final TextDirection textDirection;
 
-  const _HighlightedWordText({
+  const HighlightedWordText({
+    super.key,
     required this.text,
     required this.matchedWordFlags,
     required this.style,
@@ -760,10 +720,10 @@ class _HighlightedWordText extends StatelessWidget {
   }
 }
 
-class _StartYourDayButton extends StatelessWidget {
+class StartYourDayButton extends StatelessWidget {
   final VoidCallback onPressed;
 
-  const _StartYourDayButton({required this.onPressed});
+  const StartYourDayButton({super.key, required this.onPressed});
 
   @override
   Widget build(BuildContext context) {

@@ -39,21 +39,11 @@ final Provider<DatabaseService> databaseServiceProvider =
 final Provider<QuranRepository> quranRepositoryProvider =
     Provider<QuranRepository>((ref) => QuranRepository());
 
-/// Match-percentage threshold required to clear each configured difficulty.
-/// Mirrors the Difficulty Matrix in the product spec; unrecognized levels
-/// fall back to Medium so a bad/missing config never blocks completion.
-/// Applies to both the Arabic Ayah and its English translation.
-double _thresholdForDifficulty(String difficultyLevel) {
-  switch (difficultyLevel) {
-    case 'easy':
-      return 65.0;
-    case 'hard':
-      return 95.0;
-    case 'medium':
-    default:
-      return 80.0;
-  }
-}
+/// Match-percentage threshold required to clear a recitation gate — fixed
+/// at what used to be the "Medium" difficulty; per-alarm difficulty levels
+/// were removed by explicit product decision. Applies to both the Arabic
+/// Ayah and its English translation.
+const double _matchThreshold = 80.0;
 
 /// Wraps the atomic [AlarmStateEnum] alongside the (optional) workspace for
 /// whichever alarm session is currently active.
@@ -159,7 +149,6 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
       daysOfWeek: const [],
       isEnabled: true,
       selectedSurahIndex: 0,
-      difficultyLevel: 'medium',
     );
 
     state = AlarmSessionState(
@@ -376,11 +365,8 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
       currentProgress: score,
       matchedWordFlags: _accumulatedArabicWordFlags,
     );
-    final double threshold = _thresholdForDifficulty(
-      session.activeAlarm.difficultyLevel,
-    );
 
-    if (score < threshold) {
+    if (score < _matchThreshold) {
       state = AlarmSessionState(
         state: AlarmStateEnum.reciting,
         session: updatedSession,
@@ -440,10 +426,7 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
       translationProgress: score,
       translationMatchedWordFlags: _accumulatedTranslationWordFlags,
     );
-    final double threshold = _thresholdForDifficulty(
-      session.activeAlarm.difficultyLevel,
-    );
-    final bool cleared = score >= threshold;
+    final bool cleared = score >= _matchThreshold;
 
     state = AlarmSessionState(
       state: cleared ? AlarmStateEnum.completed : AlarmStateEnum.recitingTranslation,
