@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tarteel_rise/data/quran_verses.dart';
 import 'package:tarteel_rise/data/surah_catalog.dart';
 import 'package:tarteel_rise/services/quran_repository.dart';
+import 'package:tarteel_rise/utils/arabic_utils.dart';
 import 'package:tarteel_rise/utils/ayah_selection_utils.dart';
 
 void main() {
@@ -81,4 +82,35 @@ void main() {
       expect(session.translation, '');
     });
   });
+
+  test(
+    'real dataset verses score a full match against their own de-diacritized '
+    'text, across many Surahs (regression guard for the low-accuracy bug — '
+    'the dataset is Uthmani-script text; a correct STT-style plain '
+    'transcription of the same words must still score 100%)',
+    () {
+      // Sample across short, medium, and long Surahs rather than just
+      // Al-Fatiha, since the Wasla/dagger-Alif/Quranic-mark gaps this
+      // guards against don't distribute evenly across the Quran.
+      const List<int> sampleSurahIds = <int>[1, 2, 18, 36, 55, 67, 112, 113, 114];
+
+      for (final int surahId in sampleSurahIds) {
+        for (final AyahRecord ayah in repository.versesFor(surahId)) {
+          // A real STT engine returns plain, unmarked Arabic — simulated
+          // here by normalizing the real Quranic text itself, which is
+          // exactly what a correctly-recognized plain recitation would
+          // look like.
+          final String plausibleSttOutput = normalizeArabicText(ayah.text);
+          final double score = calculateMatchPercentage(ayah.text, plausibleSttOutput);
+
+          expect(
+            score,
+            100.0,
+            reason: 'Surah $surahId ayah ${ayah.id} ("${ayah.text}") only '
+                'scored $score against its own plain form ("$plausibleSttOutput")',
+          );
+        }
+      }
+    },
+  );
 }

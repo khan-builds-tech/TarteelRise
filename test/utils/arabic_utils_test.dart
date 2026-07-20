@@ -23,6 +23,41 @@ void main() {
       const String clean = 'الرحمن الرحيم';
       expect(normalizeArabicText(clean), clean);
     });
+
+    test('folds Alef Wasla (ٱ) to a bare Alef, not just إ/أ/آ', () {
+      // The bundled Quran dataset (assets/data/quran_en.json) is written in
+      // Uthmani script, which spells "the" (ال-) with Alef Wasla almost
+      // everywhere — e.g. "ٱللَّهِ" — while spoken/STT-transcribed
+      // recitation says the plain form, "الله". Regression test for a real
+      // bug: Wasla wasn't in the original Alef-folding regex at all.
+      expect(normalizeArabicText('ٱللَّهِ'), normalizeArabicText('الله'));
+    });
+
+    test('strips Quranic small-mark diacritics beyond basic Tashkeel', () {
+      // U+06E1 (ARABIC SMALL HIGH DOTLESS HEAD OF KHAH) appears ~37,000
+      // times in the bundled dataset and is outside the basic
+      // Fatha-through-Sukun range — a real gap in the original diacritics
+      // regex.
+      expect(normalizeArabicText('بِسۡمِ'), 'بسم');
+    });
+
+    test('folds dagger Alif (superscript Alef) to a real Alef, not deletes it', () {
+      // Dagger Alif represents an actual long "aa" vowel sound (e.g.
+      // "ٱلۡعَٰلَمِينَ" is pronounced "al-'aalameen") rather than a mere
+      // pronunciation modifier — deleting it instead of folding it to Alef
+      // was a regression found while fixing the Wasla bug above: it turned
+      // "العالمين" into "العلمين", a real word-level mismatch.
+      expect(normalizeArabicText('ٱلۡعَٰلَمِينَ'), normalizeArabicText('العالمين'));
+      expect(normalizeArabicText('صِرَٰطَ'), normalizeArabicText('صراط'));
+    });
+
+    test('drops Tatweel (kashida) without affecting the surrounding letters', () {
+      expect(normalizeArabicText('بِسْـــمِ اللَّه'), normalizeArabicText('بسم الله'));
+    });
+
+    test('strips digits and stray punctuation', () {
+      expect(normalizeArabicText('الحمد، لله! ١٢٣'), 'الحمد لله');
+    });
   });
 
   group('calculateMatchPercentage', () {
