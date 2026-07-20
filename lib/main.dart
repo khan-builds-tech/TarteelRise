@@ -29,6 +29,12 @@ Future<void> main() async {
   final AlarmHardwareService alarmHardwareService =
       container.read(alarmHardwareServiceProvider);
   await alarmHardwareService.initializeHardware();
+  // Must happen before the first scheduling attempt below — the native
+  // `alarm` package silently reports success even when this permission is
+  // missing (see `AlarmHardwareService.hasExactAlarmPermission`), so
+  // granting it late would mean every alarm scheduled before the user
+  // responds to this prompt never actually got registered with the OS.
+  await alarmHardwareService.requestExactAlarmPermission();
   await alarmHardwareService.rescheduleAllEnabledAlarms(databaseService.getAllAlarms());
   await alarmHardwareService.requestBatteryOptimizationExemption();
 

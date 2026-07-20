@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:alarm/alarm.dart';
 import 'package:flutter/foundation.dart';
@@ -83,6 +84,53 @@ class AlarmHardwareService {
     }
   }
 
+  /// Prompts the user to grant the "Alarms & reminders" exact-alarm
+  /// permission if it isn't already — call once during app bootstrap,
+  /// before the first [scheduleMorningAlarm].
+  ///
+  /// This exists because the underlying `alarm` package's native Android
+  /// scheduling call silently swallows a missing/revoked exact-alarm
+  /// permission: `AlarmApiImpl.setAlarm` calls back
+  /// `Result.success(Unit)` *unconditionally*, even when the
+  /// `AlarmManager.setExactAndAllowWhileIdle` call inside throws a
+  /// `SecurityException` — that exception is caught and only logged on
+  /// the native side, never surfaced back through the platform channel.
+  /// So `Alarm.set()` reports success while genuinely scheduling nothing.
+  /// [_setNativeAlarm] checks [hasExactAlarmPermission] itself before ever
+  /// calling into the plugin, for exactly this reason — this method is
+  /// what gets the permission granted in the first place so that check
+  /// normally passes. No-op on iOS, where this permission doesn't exist.
+  Future<void> requestExactAlarmPermission() async {
+    if (!Platform.isAndroid) return;
+    try {
+      if (await Permission.scheduleExactAlarm.isDenied) {
+        await Permission.scheduleExactAlarm.request();
+      }
+    } catch (error, stackTrace) {
+      debugPrint(
+        'AlarmHardwareService.requestExactAlarmPermission failed: $error\n$stackTrace',
+      );
+    }
+  }
+
+  /// Whether the exact-alarm permission is currently granted. Always
+  /// `true` on iOS (the concept doesn't exist there) or if the permission
+  /// check itself fails — fails open rather than blocking every alarm
+  /// from ever scheduling just because the check couldn't run; the native
+  /// call being attempted afterward is still wrapped in its own
+  /// try/catch/timeout regardless.
+  Future<bool> hasExactAlarmPermission() async {
+    if (!Platform.isAndroid) return true;
+    try {
+      return await Permission.scheduleExactAlarm.isGranted;
+    } catch (error, stackTrace) {
+      debugPrint(
+        'AlarmHardwareService.hasExactAlarmPermission failed: $error\n$stackTrace',
+      );
+      return true;
+    }
+  }
+
   /// Translates [alarmSettings] (our Hive [AlarmModel]) into a native
   /// `alarm` package `AlarmSettings` and schedules it: the Adhan asset
   /// loops indefinitely, volume is pinned to maximum and enforced, and a
@@ -154,6 +202,20 @@ class AlarmHardwareService {
     required DateTime dateTime,
     required String callerName,
   }) async {
+    // Checked *before* ever calling into the plugin: `Alarm.set()` reports
+    // success unconditionally even when the native
+    // `AlarmManager.setExactAndAllowWhileIdle` call it makes internally
+    // throws from a missing/revoked exact-alarm permission (see
+    // [hasExactAlarmPermission]'s doc comment) — so this is the only way
+    // to actually detect that failure and return `false` truthfully,
+    // rather than trusting a lie.
+    if (!await hasExactAlarmPermission()) {
+      debugPrint(
+        'AlarmHardwareService.$callerName failed: exact-alarm permission not granted.',
+      );
+      return false;
+    }
+
     try {
       final AlarmSettings nativeSettings = AlarmSettings(
         id: id,
@@ -166,6 +228,11 @@ class AlarmHardwareService {
         // dead when the native alarm fired.
         warningNotificationOnKill: true,
         androidFullScreenIntent: true,
+        // Ensures this alarm still rings even if another one happens to be
+        // ringing at the same moment — most relevant for the Dead Man's
+        // Switch fallback, which must always fire regardless of whatever
+        // else might coincidentally be active.
+        allowAlarmOverlap: true,
         // Defaults to `true` in the `alarm` package, which stops the native
         // alarm the moment Android tears down the app's task — defeating
         // the whole point of surviving a swipe-away kill. Must be `false`
