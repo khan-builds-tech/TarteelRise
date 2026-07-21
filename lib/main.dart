@@ -29,6 +29,10 @@ Future<void> main() async {
   final AlarmHardwareService alarmHardwareService =
       container.read(alarmHardwareServiceProvider);
   await alarmHardwareService.initializeHardware();
+  // Also needed before the first scheduling attempt: without this grant,
+  // the alarm's own foreground-service notification can fail to post,
+  // which can quietly stop it from ringing in the background at all.
+  await alarmHardwareService.requestNotificationPermission();
   // Must happen before the first scheduling attempt below — the native
   // `alarm` package silently reports success even when this permission is
   // missing (see `AlarmHardwareService.hasExactAlarmPermission`), so
@@ -115,6 +119,13 @@ class TarteelRiseApp extends StatelessWidget {
 /// underneath would let the system back button pop straight past the
 /// recitation requirement, and the stack must never accumulate
 /// alarm-session routes across repeated wake-ups.
+///
+/// The removal predicate is `route.isFirst`, never a bare `false` — this
+/// widget's own route is that first route, so a predicate that removes
+/// everything (including it) would unmount `AppNavigationWrapper` itself
+/// on the very first transition, silently killing this `ref.listen` for
+/// the rest of the app's life and leaving every later transition (e.g.
+/// `completed`) with nothing left to route it.
 class AppNavigationWrapper extends ConsumerWidget {
   const AppNavigationWrapper({super.key});
 
@@ -128,7 +139,7 @@ class AppNavigationWrapper extends ConsumerWidget {
         if (next == AlarmStateEnum.completed && previous != AlarmStateEnum.completed) {
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute<void>(builder: (_) => const StreakSuccessScreen()),
-            (Route<void> route) => false,
+            (Route<void> route) => route.isFirst,
           );
           return;
         }
@@ -147,7 +158,7 @@ class AppNavigationWrapper extends ConsumerWidget {
             builder: (_) =>
                 isIdle ? const AlarmDashboardScreen() : const AlarmActiveScreen(),
           ),
-          (Route<void> route) => false,
+          (Route<void> route) => route.isFirst,
         );
       },
     );

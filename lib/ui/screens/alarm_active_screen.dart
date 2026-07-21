@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -75,12 +76,10 @@ class _AlarmActiveScreenState extends ConsumerState<AlarmActiveScreen>
                 ),
               AlarmStateEnum.reciting => _RecitingLayout(
                   session: sessionState.session,
-                  isMicActive: sessionState.isMicActive,
                   speechErrorMessage: sessionState.speechErrorMessage,
                 ),
               AlarmStateEnum.recitingTranslation => _RecitingTranslationLayout(
                   session: sessionState.session,
-                  isMicActive: sessionState.isMicActive,
                   speechErrorMessage: sessionState.speechErrorMessage,
                 ),
               // `AppNavigationWrapper` (main.dart) hard-replaces this whole
@@ -121,25 +120,106 @@ class _AlarmActiveScreenState extends ConsumerState<AlarmActiveScreen>
         );
       case AlarmStateEnum.reciting:
       case AlarmStateEnum.recitingTranslation:
-        return AnimatedBuilder(
-          animation: _pulseController,
-          builder: (context, child) {
-            final double scale = 1.0 + (_pulseController.value * 0.15);
-            return Transform.scale(scale: scale, child: child);
-          },
-          child: FloatingActionButton.large(
-            onPressed: () => ref.read(alarmStateProvider.notifier).retryVoiceCapture(),
-            tooltip: sessionState.isMicActive ? 'Listening…' : 'Tap to open the microphone',
-            child: Icon(
-              sessionState.isMicActive ? Icons.mic : Icons.mic_none,
-              size: 40,
-            ),
-          ),
-        );
+        return _MicToggleButton(isMicActive: sessionState.isMicActive);
       case AlarmStateEnum.idle:
       case AlarmStateEnum.completed:
         return null;
     }
+  }
+}
+
+/// The mic control during `reciting`/`recitingTranslation`: an animated
+/// waveform while listening, a static mic icon while stopped — tapping
+/// either toggles to the other. [pauseVoiceCapture]/[retryVoiceCapture]
+/// are the two halves of that toggle on [AlarmStateNotifier]; neither
+/// races the other the way a single always-"start" action used to (see
+/// [AlarmStateNotifier.pauseVoiceCapture]'s doc comment).
+class _MicToggleButton extends ConsumerWidget {
+  final bool isMicActive;
+
+  const _MicToggleButton({required this.isMicActive});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return GestureDetector(
+      onTap: () => isMicActive
+          ? ref.read(alarmStateProvider.notifier).pauseVoiceCapture()
+          : ref.read(alarmStateProvider.notifier).retryVoiceCapture(),
+      child: Container(
+        width: 96,
+        height: 96,
+        decoration: const BoxDecoration(
+          color: AppColors.accentEmerald,
+          shape: BoxShape.circle,
+        ),
+        alignment: Alignment.center,
+        child: isMicActive
+            ? const _MicWaveform()
+            : const Icon(Icons.mic_none, color: Colors.white, size: 40),
+      ),
+    );
+  }
+}
+
+/// 5 vertical bars, each oscillating on its own phase/speed so the group
+/// reads as an organic audio wave rather than a mechanical, synchronized
+/// pulse — driven by one [AnimationController] rather than five, since
+/// the bars only need a shared clock, not independent animation state.
+class _MicWaveform extends StatefulWidget {
+  const _MicWaveform();
+
+  @override
+  State<_MicWaveform> createState() => _MicWaveformState();
+}
+
+class _MicWaveformState extends State<_MicWaveform> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  static const List<double> _speeds = <double>[1.0, 1.4, 0.8, 1.2, 0.9];
+  static const List<double> _phases = <double>[0.0, 0.3, 0.6, 0.1, 0.5];
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: List<Widget>.generate(_speeds.length, (int i) {
+            final double t = _controller.value * _speeds[i] + _phases[i];
+            final double wave = (math.sin(t * 2 * math.pi) + 1) / 2;
+            final double height = 10 + wave * 26;
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 3),
+              child: Container(
+                width: 5,
+                height: height,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+            );
+          }),
+        );
+      },
+    );
   }
 }
 
@@ -208,7 +288,7 @@ class _PausedLayout extends ConsumerWidget {
       children: [
         const SizedBox(height: 16),
         Text(
-          'Read the Ayah, then tap Start Reciting when ready.',
+          'Read the Ayah — the microphone is opening.',
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.bodyLarge,
         ),
@@ -279,65 +359,12 @@ class _SpeechErrorBanner extends StatelessWidget {
   }
 }
 
-class _MicStatusBanner extends StatelessWidget {
-  final bool isMicActive;
-  final String? speechErrorMessage;
-
-  const _MicStatusBanner({
-    required this.isMicActive,
-    this.speechErrorMessage,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (speechErrorMessage != null) {
-      return _SpeechErrorBanner(message: speechErrorMessage!);
-    }
-
-    return Card(
-      color: Colors.transparent,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(
-          color: isMicActive ? AppColors.accentEmerald : Colors.orangeAccent,
-          width: 1.5,
-        ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            Icon(
-              isMicActive ? Icons.mic : Icons.mic_none,
-              color: isMicActive ? AppColors.accentEmerald : Colors.orangeAccent,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                isMicActive
-                    ? 'Listening — recite the text aloud.'
-                    : 'Microphone is off. Tap the mic button below to start listening.',
-                style: TextStyle(
-                  color: isMicActive ? AppColors.accentEmerald : Colors.orangeAccent,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _RecitingLayout extends StatelessWidget {
   final ActiveAlarmSession? session;
-  final bool isMicActive;
   final String? speechErrorMessage;
 
   const _RecitingLayout({
     required this.session,
-    required this.isMicActive,
     this.speechErrorMessage,
   });
 
@@ -350,7 +377,7 @@ class _RecitingLayout extends StatelessWidget {
 
     return Column(
       children: [
-        _MicStatusBanner(isMicActive: isMicActive, speechErrorMessage: speechErrorMessage),
+        if (speechErrorMessage != null) _SpeechErrorBanner(message: speechErrorMessage!),
         const Spacer(),
         ArabicAyahCard(
           arabicText: currentSession.currentAyahArabic,
@@ -371,12 +398,10 @@ class _RecitingLayout extends StatelessWidget {
 /// and highlighted the same way the Ayah was.
 class _RecitingTranslationLayout extends StatelessWidget {
   final ActiveAlarmSession? session;
-  final bool isMicActive;
   final String? speechErrorMessage;
 
   const _RecitingTranslationLayout({
     required this.session,
-    required this.isMicActive,
     this.speechErrorMessage,
   });
 
@@ -389,7 +414,7 @@ class _RecitingTranslationLayout extends StatelessWidget {
 
     return Column(
       children: [
-        _MicStatusBanner(isMicActive: isMicActive, speechErrorMessage: speechErrorMessage),
+        if (speechErrorMessage != null) _SpeechErrorBanner(message: speechErrorMessage!),
         const Spacer(),
         _TranslationCard(
           translation: currentSession.currentAyahTranslation,

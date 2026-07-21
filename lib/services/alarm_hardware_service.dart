@@ -113,6 +113,26 @@ class AlarmHardwareService {
     }
   }
 
+  /// Requests the runtime notification permission. The manifest already
+  /// declares `POST_NOTIFICATIONS`, but Android 13+ also requires this
+  /// runtime grant — without it, the alarm's own foreground-service
+  /// notification (required for it to keep running/ringing while the app
+  /// is backgrounded or killed) can fail to post, which can silently stop
+  /// the alarm from firing at all rather than just hiding a notification.
+  /// No-op (fails open) if the check/request itself fails, same as
+  /// [requestBatteryOptimizationExemption].
+  Future<void> requestNotificationPermission() async {
+    try {
+      if (await Permission.notification.isDenied) {
+        await Permission.notification.request();
+      }
+    } catch (error, stackTrace) {
+      debugPrint(
+        'AlarmHardwareService.requestNotificationPermission failed: $error\n$stackTrace',
+      );
+    }
+  }
+
   /// Whether the exact-alarm permission is currently granted. Always
   /// `true` on iOS (the concept doesn't exist there) or if the permission
   /// check itself fails — fails open rather than blocking every alarm

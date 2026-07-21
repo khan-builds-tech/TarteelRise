@@ -199,8 +199,15 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     );
   }
 
-  /// Step one of the wake-up flow: silence the Adhan and reveal the Ayah
-  /// so the user can read it before opening the microphone.
+  /// Step one of the wake-up flow: silence the Adhan, reveal the Ayah, and
+  /// immediately open the microphone — the user already signaled they're
+  /// ready to recite by silencing the Adhan, so there's no separate manual
+  /// "Start Reciting" tap in the normal path. [startVoiceCapture] still
+  /// requires `state.state == paused` and is what actually performs the
+  /// mic permission/init handshake, so this only ever *chains* into it
+  /// (and safely falls back to sitting in `paused` with a retry FAB and
+  /// [AlarmSessionState.speechErrorMessage] set if that handshake fails —
+  /// see [startVoiceCapture]'s own failure path).
   Future<void> pauseAdhanForReview() async {
     if (state.state != AlarmStateEnum.ringing) return;
 
@@ -220,6 +227,7 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     }
 
     state = state.copyWith(state: AlarmStateEnum.paused);
+    await startVoiceCapture();
   }
 
   /// How much later than [resumeGracePeriod] the native Dead Man's Switch
@@ -321,6 +329,25 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
       clearSpeechError: listening,
       speechErrorMessage: listening ? null : _micStartErrorMessage(),
     );
+  }
+
+  /// Explicit user-initiated stop, paired with [retryVoiceCapture] as an
+  /// on/off toggle (see the mic waveform button in `AlarmActiveScreen`):
+  /// unlike [retryVoiceCapture], which only ever tries to *start*
+  /// listening — tapping it while already active raced a stop+restart
+  /// inside [SpeechService.startListening]'s own cooldown handling and
+  /// could strand the mic stopped with no obvious way to tell it apart
+  /// from "still listening" — this only stops, and only if actually
+  /// active, so the two can never race each other.
+  Future<void> pauseVoiceCapture() async {
+    if (state.state != AlarmStateEnum.reciting &&
+        state.state != AlarmStateEnum.recitingTranslation) {
+      return;
+    }
+    if (!state.isMicActive) return;
+
+    await speechService.stopListening();
+    state = state.copyWith(isMicActive: false, clearSpeechError: true);
   }
 
   Future<bool> _ensureSpeechReady() async {
