@@ -9,6 +9,7 @@ class AppColors {
   static const Color primaryBackground = Color(0xFF1A2332);
   static const Color accentEmerald = Color(0xFF10B981);
   static const Color surfaceElevated = Color(0xFF1E1E1E);
+  static const Color cardSurface = Color(0xFF252F41);
   static const Color textPrimary = Color(0xFFF5F5F5);
 }
 

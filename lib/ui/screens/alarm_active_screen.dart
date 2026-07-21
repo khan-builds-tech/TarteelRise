@@ -720,27 +720,6 @@ class HighlightedWordText extends StatelessWidget {
   }
 }
 
-class StartYourDayButton extends StatelessWidget {
-  final VoidCallback onPressed;
-
-  const StartYourDayButton({super.key, required this.onPressed});
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      height: 64,
-      child: FilledButton(
-        onPressed: onPressed,
-        child: const Text(
-          'Start Your Day',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-        ),
-      ),
-    );
-  }
-}
-
 /// Live digital clock, ticking every second. Isolated into its own
 /// [StatefulWidget] so only this subtree rebuilds each second rather than
 /// the whole screen.
