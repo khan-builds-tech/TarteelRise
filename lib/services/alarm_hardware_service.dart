@@ -212,6 +212,52 @@ class AlarmHardwareService {
     );
   }
 
+  /// Cancels any *native* alarm (primary or Dead Man's Switch) left over
+  /// from a deleted alarm, or a disabled one whose own cancel call failed —
+  /// the actual "ghost trigger" risk. Our own Hive [AlarmModel]s are
+  /// recurring rules (hour/minute/days), not one-shot fire times, so
+  /// nothing stored in Hive itself can go stale/expired the way a one-shot
+  /// alarm could; [rescheduleAllEnabledAlarms] already recomputes every
+  /// enabled alarm's next fire time fresh from `DateTime.now()` on every
+  /// cold launch. What *can* go stale is the native `alarm` package's own
+  /// persisted schedule, if a `cancelScheduledAlarm`/`cancelDeadMansSwitchAlarm`
+  /// call was made but the app was killed before the native side confirmed
+  /// it, or a Hive record was removed some other way.
+  ///
+  /// [allAlarms] should be every alarm currently in Hive, enabled or not.
+  /// A Dead Man's Switch id is left alone as long as its parent alarm still
+  /// exists at all (even disabled) — there is no reliable way to tell
+  /// "orphaned" apart from "legitimately about to fire because the app was
+  /// just killed mid-recitation" purely from Hive state, and silently
+  /// cancelling a real one would defeat the safety net it exists for. Only
+  /// a primary schedule for a now-*disabled* alarm, or any native alarm
+  /// with no matching Hive record left at all, is unambiguous.
+  Future<void> purgeOrphanedNativeAlarms(List<AlarmModel> allAlarms) async {
+    try {
+      final Set<int> expectedEnabledIds = allAlarms
+          .where((alarm) => alarm.isEnabled)
+          .map((alarm) => nativeAlarmIdFor(alarm.id))
+          .toSet();
+      final Set<int> possibleDeadMansSwitchIds =
+          allAlarms.map((alarm) => nativeFallbackAlarmIdFor(alarm.id)).toSet();
+
+      final List<AlarmSettings> scheduled =
+          await Alarm.getAlarms().timeout(nativeCallTimeout);
+      for (final AlarmSettings native in scheduled) {
+        final bool isExpectedPrimary = expectedEnabledIds.contains(native.id);
+        final bool isPossibleDeadMansSwitch =
+            possibleDeadMansSwitchIds.contains(native.id);
+        if (!isExpectedPrimary && !isPossibleDeadMansSwitch) {
+          await Alarm.stop(native.id).timeout(nativeCallTimeout);
+        }
+      }
+    } catch (error, stackTrace) {
+      debugPrint(
+        'AlarmHardwareService.purgeOrphanedNativeAlarms failed: $error\n$stackTrace',
+      );
+    }
+  }
+
   /// Shared native-scheduling path for both [scheduleMorningAlarm] and
   /// [scheduleDeadMansSwitchAlarm] — they differ only in which id and
   /// `dateTime` they schedule under; every audio/volume/foreground-service
@@ -354,6 +400,19 @@ class AlarmHardwareService {
       debugPrint(
         'AlarmHardwareService.stopResumedAdhanPlayback failed: $error\n$stackTrace',
       );
+    }
+  }
+
+  /// Same as [stopResumedAdhanPlayback], but only if the resume player was
+  /// ever actually constructed — mirrors the guard [stopActiveAlarmSound]
+  /// already uses around it. Most sessions never call
+  /// [resumeAdhanPlayback] at all, so a caller wanting to guarantee "every
+  /// audio path is stopped" (e.g. [AudioService.stopAllAudio]) must not
+  /// force [_resumePlayerInstance]'s lazy construction just to immediately
+  /// stop a player that was never playing anything.
+  Future<void> stopResumedAdhanPlaybackIfActive() async {
+    if (_resumePlayer != null) {
+      await stopResumedAdhanPlayback();
     }
   }
 

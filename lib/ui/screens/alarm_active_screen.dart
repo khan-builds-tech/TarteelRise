@@ -262,7 +262,7 @@ class _RingingLayout extends StatelessWidget {
           child: const _FlashDot(),
         ),
         const Spacer(),
-        const _EmergencyFallbackButton(),
+        const _EmergencyStopButton(),
         const SizedBox(height: 140),
       ],
     );
@@ -304,7 +304,7 @@ class _PausedLayout extends ConsumerWidget {
           icon: const Icon(Icons.volume_up),
           label: const Text('Resume Adhan'),
         ),
-        const _EmergencyFallbackButton(),
+        const _EmergencyStopButton(),
         const SizedBox(height: 140),
       ],
     );
@@ -386,7 +386,7 @@ class _RecitingLayout extends StatelessWidget {
         const SizedBox(height: 32),
         _MatchProgressTracker(progress: currentSession.currentProgress),
         const Spacer(),
-        const _EmergencyFallbackButton(),
+        const _EmergencyStopButton(),
         const SizedBox(height: 140),
       ],
     );
@@ -423,7 +423,7 @@ class _RecitingTranslationLayout extends StatelessWidget {
         const SizedBox(height: 32),
         _MatchProgressTracker(progress: currentSession.translationProgress),
         const Spacer(),
-        const _EmergencyFallbackButton(),
+        const _EmergencyStopButton(),
         const SizedBox(height: 140),
       ],
     );
@@ -456,26 +456,61 @@ class _TranslationCard extends StatelessWidget {
   }
 }
 
-/// Entry point to the Emergency Snooze fallback — for when the user
-/// genuinely cannot speak. Deliberately understated (a text button, not a
-/// FAB) so it never competes with the primary voice-recitation flow.
-class _EmergencyFallbackButton extends ConsumerWidget {
-  const _EmergencyFallbackButton();
+/// The Hybrid Escape Hatch: ducks whichever audio is currently playing and
+/// opens the Emergency Fallback dialog — typing the Ayah's English
+/// translation is still required to actually dismiss the alarm, so tapping
+/// this alone can never silence it for free. If the dialog is cancelled
+/// without a match, the Adhan resumes exactly where it left off (see
+/// [AlarmStateNotifier.resumeAdhanIfFallbackCancelled]).
+///
+/// Deliberately more prominent than a plain text link — a user reaching
+/// for a way out needs to find it immediately, not hunt for small print —
+/// but still secondary to the primary voice-recitation flow (an outlined
+/// button, not a FAB).
+class _EmergencyStopButton extends ConsumerWidget {
+  const _EmergencyStopButton();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return TextButton.icon(
-      onPressed: () => _showEmergencyFallbackDialog(context, ref),
-      icon: const Icon(Icons.keyboard),
-      label: const Text("Can't speak? Type the translation instead"),
+    return OutlinedButton.icon(
+      onPressed: () => _handleTap(context, ref),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: Colors.redAccent,
+        side: const BorderSide(color: Colors.redAccent, width: 1.5),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      ),
+      icon: const Icon(Icons.stop_circle_outlined),
+      label: const Text(
+        'Emergency Stop / Manual Dismiss',
+        style: TextStyle(fontWeight: FontWeight.w600),
+      ),
     );
   }
 
-  Future<void> _showEmergencyFallbackDialog(BuildContext context, WidgetRef ref) {
-    return showDialog<void>(
+  Future<void> _handleTap(BuildContext context, WidgetRef ref) async {
+    final AlarmStateNotifier notifier = ref.read(alarmStateProvider.notifier);
+
+    // The Adhan is only ever audible while `ringing` — every other active
+    // state already has it silenced by design (see
+    // `AlarmStateNotifier.resumeAdhanIfFallbackCancelled`'s doc comment).
+    // Ducking/resuming only in that case keeps this button a no-op-safe
+    // shortcut from any state, without ever *starting* playback during a
+    // phase where silence is the invariant.
+    final bool wasRinging = ref.read(alarmStateProvider).state == AlarmStateEnum.ringing;
+
+    if (wasRinging) {
+      await notifier.duckForEmergencyFallback();
+    }
+
+    if (!context.mounted) return;
+    await showDialog<void>(
       context: context,
       builder: (_) => const _EmergencyFallbackDialog(),
     );
+
+    if (wasRinging) {
+      await notifier.resumeAdhanIfFallbackCancelled();
+    }
   }
 }
 

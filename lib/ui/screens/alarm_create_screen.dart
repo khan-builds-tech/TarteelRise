@@ -110,17 +110,35 @@ class _AlarmCreateScreenState extends ConsumerState<AlarmCreateScreen> {
       selectedSurahIndex: surah.id,
     );
 
+    final alarmHardwareService = ref.read(alarmHardwareServiceProvider);
+
+    // Bootstrap only prompts for this once, on cold launch (see `main.dart`).
+    // A user who dismissed that prompt would otherwise have no way back to
+    // it short of finding the OS settings screen themselves, so re-check
+    // (and re-prompt, which redirects straight to the "Alarms & reminders"
+    // settings page) right here, before the alarm that depends on it is
+    // actually scheduled.
+    if (!await alarmHardwareService.hasExactAlarmPermission()) {
+      await alarmHardwareService.requestExactAlarmPermission();
+    }
+
     await ref.read(databaseServiceProvider).saveAlarm(alarm);
-    final bool scheduled =
-        await ref.read(alarmHardwareServiceProvider).scheduleMorningAlarm(alarm);
+    final bool scheduled = await alarmHardwareService.scheduleMorningAlarm(alarm);
+    final bool hasPermission =
+        scheduled ? true : await alarmHardwareService.hasExactAlarmPermission();
     ref.read(alarmListProvider.notifier).refresh();
 
     if (!mounted) return;
 
     if (!scheduled) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Alarm saved, but could not be scheduled on this device.'),
+        SnackBar(
+          content: Text(
+            hasPermission
+                ? 'Alarm saved, but could not be scheduled on this device.'
+                : 'Alarm saved, but won\'t ring reliably without the "Alarms & '
+                    'reminders" permission. Enable it in system settings.',
+          ),
         ),
       );
     }

@@ -51,4 +51,38 @@ void main() {
       },
     );
   });
+
+  group('purgeOrphanedNativeAlarms', () {
+    test('fails safe (completes without throwing) when the native call itself has no plugin', () async {
+      final AlarmModel alarm = AlarmModel(
+        id: 'ghost-trigger-test-alarm',
+        hour: 6,
+        minute: 0,
+        daysOfWeek: const [],
+        isEnabled: true,
+        selectedSurahIndex: 1,
+      );
+
+      // `Alarm.getAlarms()` has no plugin registered here and times out —
+      // this only proves the failure is swallowed (per the class's
+      // "hardware calls must fail safe" convention), not that any native
+      // alarm was actually inspected/purged.
+      await expectLater(service.purgeOrphanedNativeAlarms([alarm]), completes);
+    });
+  });
+
+  group('stopResumedAdhanPlaybackIfActive', () {
+    test('is a no-op when the resume player was never constructed', () async {
+      // Must NOT force-construct the lazy `just_audio` player just to stop
+      // it — that constructor touches platform channels with no
+      // implementation registered in a plain Dart test and throws in ways
+      // that escape a surrounding try/catch. Completing at all (let alone
+      // quickly) proves the guard skipped construction entirely.
+      await expectLater(
+        AlarmHardwareService(nativeCallTimeout: const Duration(milliseconds: 50))
+            .stopResumedAdhanPlaybackIfActive(),
+        completes,
+      );
+    });
+  });
 }

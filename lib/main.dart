@@ -39,7 +39,13 @@ Future<void> main() async {
   // granting it late would mean every alarm scheduled before the user
   // responds to this prompt never actually got registered with the OS.
   await alarmHardwareService.requestExactAlarmPermission();
-  await alarmHardwareService.rescheduleAllEnabledAlarms(databaseService.getAllAlarms());
+
+  final List<AlarmModel> allAlarms = databaseService.getAllAlarms();
+  // Must run before rescheduling below — cancels any native alarm left
+  // over from a deleted/disabled Hive alarm before a fresh schedule is
+  // laid down, so a stale native entry can never ring on its own.
+  await alarmHardwareService.purgeOrphanedNativeAlarms(allAlarms);
+  await alarmHardwareService.rescheduleAllEnabledAlarms(allAlarms);
   await alarmHardwareService.requestBatteryOptimizationExemption();
 
   // Parses the ~2.3MB bundled Quran dataset off the synchronous call

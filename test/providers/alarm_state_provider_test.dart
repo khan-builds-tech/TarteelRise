@@ -5,6 +5,7 @@ import 'package:tarteel_rise/models/alarm_model.dart';
 import 'package:tarteel_rise/models/alarm_state_enum.dart';
 import 'package:tarteel_rise/providers/alarm_state_provider.dart';
 import 'package:tarteel_rise/services/alarm_hardware_service.dart';
+import 'package:tarteel_rise/services/audio_service.dart';
 import 'package:tarteel_rise/services/database_service.dart';
 import 'package:tarteel_rise/services/speech_service.dart';
 
@@ -85,10 +86,12 @@ void main() {
     AlarmHardwareService? alarmHardwareService,
     SpeechService? speechService,
   }) {
+    final AlarmHardwareService resolvedAlarmHardwareService = alarmHardwareService ??
+        AlarmHardwareService(nativeCallTimeout: const Duration(milliseconds: 50));
     final AlarmStateNotifier notifier = AlarmStateNotifier(
       speechService: speechService ?? _FakeSpeechService(),
-      alarmHardwareService: alarmHardwareService ??
-          AlarmHardwareService(nativeCallTimeout: const Duration(milliseconds: 50)),
+      alarmHardwareService: resolvedAlarmHardwareService,
+      audioService: AudioService(resolvedAlarmHardwareService),
       databaseService: databaseService,
       resumeGracePeriod: resumeGracePeriod ?? const Duration(minutes: 4),
     );

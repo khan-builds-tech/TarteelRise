@@ -7,6 +7,7 @@ import '../models/active_alarm_session.dart';
 import '../models/alarm_model.dart';
 import '../models/alarm_state_enum.dart';
 import '../services/alarm_hardware_service.dart';
+import '../services/audio_service.dart';
 import '../services/database_service.dart';
 import '../services/quran_repository.dart';
 import '../services/speech_service.dart';
@@ -22,6 +23,15 @@ final Provider<SpeechService> speechServiceProvider =
 
 final Provider<AlarmHardwareService> alarmHardwareServiceProvider =
     Provider<AlarmHardwareService>((ref) => AlarmHardwareService());
+
+/// A thin facade over the one [AlarmHardwareService] instance above (itself
+/// already an app-wide singleton for this `ProviderContainer`'s lifetime),
+/// adding only the emergency "stop every audio path" utility — see
+/// [AudioService]'s own doc comment for why it doesn't own a second
+/// `AudioPlayer`.
+final Provider<AudioService> audioServiceProvider = Provider<AudioService>(
+  (ref) => AudioService(ref.watch(alarmHardwareServiceProvider)),
+);
 
 /// `main()` reads this via a [ProviderContainer] to open the Hive boxes
 /// before `runApp()`, and it stays the same instance for the rest of the
@@ -88,6 +98,7 @@ class AlarmSessionState {
 class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
   final SpeechService speechService;
   final AlarmHardwareService alarmHardwareService;
+  final AudioService audioService;
   final DatabaseService databaseService;
 
   /// If the user doesn't reach `completed` within this long after starting
@@ -130,6 +141,7 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
   AlarmStateNotifier({
     required this.speechService,
     required this.alarmHardwareService,
+    required this.audioService,
     required this.databaseService,
     this.resumeGracePeriod = const Duration(minutes: 4),
   }) : super(const AlarmSessionState());
@@ -579,20 +591,52 @@ class AlarmStateNotifier extends StateNotifier<AlarmSessionState> {
     return true;
   }
 
-  /// Once the flow is fully complete, the mic is no longer needed and the
-  /// ringing (or resumed) Adhan must be killed immediately — both wrapped
-  /// so a hardware failure here can't strand the app on a silenced-looking
-  /// but still-ringing alarm. Also disarms the Dead Man's Switch armed in
-  /// [startVoiceCapture] — a validated recitation or Emergency Snooze
-  /// reaching here means the session is genuinely over, so the safety-net
-  /// alarm must be cancelled "along with the parent alarm session" rather
-  /// than fire a minute later against a session that no longer exists.
+  /// Once the flow is fully complete, the mic is no longer needed and every
+  /// audio path the alarm could be using must be killed immediately — both
+  /// wrapped so a hardware failure here can't strand the app on a
+  /// silenced-looking but still-ringing alarm. Also disarms the Dead Man's
+  /// Switch armed in [startVoiceCapture] — a validated recitation or
+  /// Emergency Snooze reaching here means the session is genuinely over, so
+  /// the safety-net alarm must be cancelled "along with the parent alarm
+  /// session" rather than fire a minute later against a session that no
+  /// longer exists.
   Future<void> _silenceAlarmOnCompletion(AlarmModel alarm) async {
     await speechService.stopListening();
-    await alarmHardwareService.stopActiveAlarmSound(
-      AlarmHardwareService.nativeAlarmIdFor(alarm.id),
-    );
+    await audioService.stopAllAudio();
     await alarmHardwareService.cancelDeadMansSwitchAlarm(alarm.id);
+  }
+
+  /// Half one of the Hybrid Escape Hatch (see `_EmergencyStopButton` in
+  /// `AlarmActiveScreen`): temporarily silences the ringing Adhan so the
+  /// user isn't fighting it while filling out the Emergency Fallback
+  /// dialog. Deliberately does *not* touch the Dead Man's Switch or end the
+  /// session — [resumeAdhanIfFallbackCancelled] undoes this if the dialog
+  /// closes without a successful match, so tapping the button alone can
+  /// never permanently silence the alarm for free.
+  Future<void> duckForEmergencyFallback() async {
+    final ActiveAlarmSession? session = state.session;
+    if (session == null) return;
+    await alarmHardwareService.duckAlarmForRecitation(
+      AlarmHardwareService.nativeAlarmIdFor(session.activeAlarm.id),
+    );
+  }
+
+  /// Half two: resumes the Adhan if the Emergency Fallback dialog opened via
+  /// [duckForEmergencyFallback] was dismissed without a successful match —
+  /// otherwise tapping "Emergency Stop" and cancelling would silence the
+  /// alarm for free, exactly the unconditional snooze button this app is
+  /// built not to have. No-op if the session already completed in the
+  /// meantime (a legitimate recitation finishing while the dialog was
+  /// open). Callers must only invoke this when the audio was actually
+  /// playing before the dialog opened — i.e. the session was in `ringing`,
+  /// the only state in which the Adhan is ever audible; every other active
+  /// state already has it silenced by design, and resuming from one of
+  /// those would violate that invariant.
+  Future<void> resumeAdhanIfFallbackCancelled() async {
+    if (state.state == AlarmStateEnum.completed || state.state == AlarmStateEnum.idle) {
+      return;
+    }
+    await alarmHardwareService.resumeAdhanPlayback();
   }
 
   void resetToIdle() {
@@ -629,6 +673,7 @@ final StateNotifierProvider<AlarmStateNotifier, AlarmSessionState>
   (ref) => AlarmStateNotifier(
     speechService: ref.watch(speechServiceProvider),
     alarmHardwareService: ref.watch(alarmHardwareServiceProvider),
+    audioService: ref.watch(audioServiceProvider),
     databaseService: ref.watch(databaseServiceProvider),
   ),
 );
