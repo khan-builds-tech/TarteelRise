@@ -32,7 +32,14 @@ class _StreakSuccessScreenState extends ConsumerState<StreakSuccessScreen> {
     // idle transition (see AppNavigationWrapper) — refresh it here too so
     // the streak count shown on this screen reflects the recitation that
     // just completed, not whatever was cached before it.
-    ref.read(userStatsProvider.notifier).refresh();
+    // Deferred via microtask: this initState runs synchronously inside the
+    // AppNavigationWrapper's ref.listen callback (itself triggered by the
+    // alarmStateProvider transition to `completed`), so mutating another
+    // provider here directly would happen mid-build and throw.
+    Future.microtask(() {
+      if (!mounted) return;
+      ref.read(userStatsProvider.notifier).refresh();
+    });
   }
 
   @override

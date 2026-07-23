@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 
 import 'package:alarm/alarm.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:just_audio/just_audio.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -13,6 +14,14 @@ import '../models/alarm_model.dart';
 /// app talks to platform alarm APIs directly.
 class AlarmHardwareService {
   static const String adhanAssetPath = 'assets/audio/adhan.mp3';
+
+  /// Backs [hasFullScreenIntentPermission]/[requestFullScreenIntentPermission].
+  /// Android 14+'s full-screen-intent special permission has no
+  /// `permission_handler` support (it isn't a runtime dialog, just a
+  /// check + a Settings deep link), so those two native calls live directly
+  /// in `MainActivity.kt` behind this channel.
+  static const MethodChannel _fullScreenIntentChannel =
+      MethodChannel('com.tarteelrise.tarteel_rise/full_screen_intent');
 
   /// Plays the Adhan locally when [resumeAdhanPlayback] fires — deliberately
   /// NOT the native `alarm` package, which was already stopped via
@@ -148,6 +157,51 @@ class AlarmHardwareService {
         'AlarmHardwareService.hasExactAlarmPermission failed: $error\n$stackTrace',
       );
       return true;
+    }
+  }
+
+  /// Whether Android will actually honor `androidFullScreenIntent: true` and
+  /// auto-launch the ringing screen over the lock screen. Always `true` on
+  /// iOS, on Android below API 34 (where the manifest declaration alone is
+  /// sufficient), or if the check itself fails — fails open for the same
+  /// reason [hasExactAlarmPermission] does, since a failed check must never
+  /// block scheduling outright. On API 34+, the OS can silently downgrade a
+  /// fired alarm to an ordinary heads-up notification if this is `false`:
+  /// the alarm is still genuinely ringing (foreground service, audio, all
+  /// native and isolate-independent), it just won't wake the screen or show
+  /// [AlarmActiveScreen] until the user unlocks and opens the app themselves.
+  Future<bool> hasFullScreenIntentPermission() async {
+    if (!Platform.isAndroid) return true;
+    try {
+      return await _fullScreenIntentChannel
+              .invokeMethod<bool>('canUseFullScreenIntent')
+              .timeout(nativeCallTimeout) ??
+          true;
+    } catch (error, stackTrace) {
+      debugPrint(
+        'AlarmHardwareService.hasFullScreenIntentPermission failed: $error\n$stackTrace',
+      );
+      return true;
+    }
+  }
+
+  /// Deep-links to the one Settings screen
+  /// (`ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT`) that lets the user grant
+  /// the permission [hasFullScreenIntentPermission] checks — there is no
+  /// in-app dialog Android exposes for this, unlike
+  /// [requestBatteryOptimizationExemption]/[requestExactAlarmPermission].
+  /// No-op on iOS or pre-API-34 Android. Fails safe: a failed/unsupported
+  /// call just leaves the permission unset rather than throwing.
+  Future<void> requestFullScreenIntentPermission() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _fullScreenIntentChannel
+          .invokeMethod<void>('openFullScreenIntentSettings')
+          .timeout(nativeCallTimeout);
+    } catch (error, stackTrace) {
+      debugPrint(
+        'AlarmHardwareService.requestFullScreenIntentPermission failed: $error\n$stackTrace',
+      );
     }
   }
 

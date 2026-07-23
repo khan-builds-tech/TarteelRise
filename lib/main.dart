@@ -39,6 +39,15 @@ Future<void> main() async {
   // granting it late would mean every alarm scheduled before the user
   // responds to this prompt never actually got registered with the OS.
   await alarmHardwareService.requestExactAlarmPermission();
+  // On Android 14+, the manifest's `USE_FULL_SCREEN_INTENT` declaration
+  // alone no longer guarantees the ringing screen auto-launches over the
+  // lock screen — the OS can silently downgrade a fired alarm to a plain
+  // heads-up notification instead. There's no in-app dialog for this grant
+  // (unlike the requests above), so if it's missing this deep-links
+  // straight to the one Settings toggle that grants it.
+  if (!await alarmHardwareService.hasFullScreenIntentPermission()) {
+    await alarmHardwareService.requestFullScreenIntentPermission();
+  }
 
   final List<AlarmModel> allAlarms = databaseService.getAllAlarms();
   // Must run before rescheduling below — cancels any native alarm left
