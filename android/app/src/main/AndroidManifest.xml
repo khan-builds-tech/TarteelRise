@@ -6,6 +6,11 @@
          full-screen when the phone is locked. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Legacy pre-API-27 lock-screen bypass. Superseded by
+         `showWhenLocked`/`turnScreenOn` (activity attribute below +
+         MainActivity.onCreate) on modern Android, but declared for
+         completeness / any OEM fallback path that still checks it. -->
+    <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
