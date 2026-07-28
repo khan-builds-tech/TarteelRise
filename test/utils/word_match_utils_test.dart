@@ -27,6 +27,83 @@ void main() {
     test('returns an empty list for an empty original list', () {
       expect(wordMatchFlags([], ['a', 'b']), <bool>[]);
     });
+
+    test('flags a word true when recognized with one substituted letter', () {
+      expect(
+        wordMatchFlags(['alameen'], ['alamein']),
+        [true],
+      );
+    });
+
+    test('flags a word true when recognized with one dropped letter', () {
+      expect(
+        wordMatchFlags(['rahman'], ['rahmn']),
+        [true],
+      );
+    });
+
+    test('does not fuzzy-match short words a single edit apart', () {
+      expect(
+        wordMatchFlags(['in'], ['on']),
+        [false],
+      );
+    });
+
+    test('does not fuzzy-match words that differ by too many edits', () {
+      expect(
+        wordMatchFlags(['rahman'], ['xyz']),
+        [false],
+      );
+    });
+
+    test('prefers an exact match over stealing it via fuzzy match', () {
+      // 'rahman' fuzzy-matches 'rahmaan' too, but the exact 'rahman' in
+      // recognizedWords must be consumed first so the fuzzy match remains
+      // available for a second original word that needs it.
+      expect(
+        wordMatchFlags(['rahman', 'rahmaan'], ['rahmaan', 'rahman']),
+        [true, true],
+      );
+    });
+  });
+
+  group('levenshteinDistance', () {
+    test('returns 0 for identical strings', () {
+      expect(levenshteinDistance('same', 'same'), 0);
+    });
+
+    test('returns the length of the other string when one is empty', () {
+      expect(levenshteinDistance('', 'abc'), 3);
+      expect(levenshteinDistance('abc', ''), 3);
+    });
+
+    test('counts a single substitution as distance 1', () {
+      expect(levenshteinDistance('cat', 'cot'), 1);
+    });
+
+    test('counts a single insertion/deletion as distance 1', () {
+      expect(levenshteinDistance('cat', 'cats'), 1);
+    });
+  });
+
+  group('isFuzzyWordMatch', () {
+    test('requires an exact match for words 2 characters or fewer', () {
+      expect(isFuzzyWordMatch('in', 'on'), false);
+      expect(isFuzzyWordMatch('in', 'in'), true);
+    });
+
+    test('allows 1 edit for words up to 4 characters', () {
+      expect(isFuzzyWordMatch('cat', 'cot'), true);
+      expect(isFuzzyWordMatch('cats', 'cots'), true);
+    });
+
+    test('allows 2 edits for words 5 characters or longer', () {
+      expect(isFuzzyWordMatch('rahman', 'rahmaan'), true);
+    });
+
+    test('rejects words beyond the allowed edit budget', () {
+      expect(isFuzzyWordMatch('rahman', 'xyz'), false);
+    });
   });
 
   group('percentageFromFlags', () {
